@@ -1,9 +1,9 @@
 import classes
-import std/db_sqlite
 import std/json
 import std/oids
 import std/strutils
 import std/sequtils
+import db_connector/db_sqlite
 
 
 ##
