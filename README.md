@@ -41,7 +41,7 @@ db.remove("1234")
 db.query().where("type", "==", "example").remove()
 
 # Batch modifications
-db.batch:
+db.batch do():
     db.put(%* { "name": "item1" })
     db.put(%* { "name": "item2" })
     db.put(%* { "name": "item3" })

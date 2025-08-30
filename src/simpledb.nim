@@ -200,7 +200,7 @@ class SimpleDB:
             return
 
         # Begin an update transaction
-        this.batch:
+        this.batch do():
 
             # Create new field on the table
             let str = "ALTER TABLE documents ADD \"" & sqlName & "\" " & sqlType

@@ -88,7 +88,7 @@ if exampleDoc{"data"}.getStr() != "123456": raiseAssert("Content was not merged 
 test "Batch updates"
 randomize()
 let batchedCount = 1000
-db.batch:
+db.batch do():
     for i in 0 .. batchedCount:
         db.put(%* { "type": "batched", "index": i, "random": rand(1.0) })
 
