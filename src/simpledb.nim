@@ -1,9 +1,18 @@
-import classes
-import std/json
-import std/oids
-import std/strutils
-import std/sequtils
+import std/[json, oids, strutils, sequtils]
 import db_connector/db_sqlite
+import classes
+
+
+##
+## Exception types for SimpleDB
+type SimpleDBError* = object of CatchableError
+    ## Base exception for all SimpleDB errors
+
+type ValidationError* = object of SimpleDBError
+    ## Raised when input validation fails
+
+type DocumentError* = object of SimpleDBError
+    ## Raised when document operations fail
 
 
 ##
@@ -60,13 +69,38 @@ class SimpleDBExistsFilter:
     var field = ""
     var exists = true  # true = field exists, false = field does not exist
 
+##
+## Type filter for $type operator
+class SimpleDBTypeFilter:
+    var field = ""
+    var jsonType = ""  # "string", "number", "boolean", "array", "object", "null"
+
+##
+## Regex filter for $regex operator
+class SimpleDBRegexFilter:
+    var field = ""
+    var pattern = ""
+    var options = ""  # "i" for case-insensitive (using GLOB)
+
+
+##
+## Shared validation logic for where methods
+proc validateWhereParams(field, operation: string) {.inline.} =
+    if field.len == 0:
+        raise newException(ValidationError, "No field provided")
+    if operation.len == 0:
+        raise newException(ValidationError, "No operation provided")
+    if operation notin ["==", "!=", "<", "<=", ">", ">="]:
+        raise newException(ValidationError, "Unknown operation: " & operation)
 
 ##
 ## Query builder
 class SimpleDBQuery:
 
     ## Reference to the database
-    var db: RootRef
+    ## Note: Using pointer to avoid circular dependency with SimpleDB
+    ## The query() method allocates a stable copy of SimpleDB on the heap
+    var db: pointer
 
     ## List of filters
     var filters : seq[SimpleDBFilter]
@@ -79,6 +113,12 @@ class SimpleDBQuery:
 
     ## List of exists filters ($exists)
     var existsFilters: seq[SimpleDBExistsFilter]
+
+    ## List of type filters ($type)
+    var typeFilters: seq[SimpleDBTypeFilter]
+
+    ## List of regex filters ($regex)
+    var regexFilters: seq[SimpleDBRegexFilter]
 
     ## Projection fields (field selection)
     var projection: JsonNode = nil  # nil means no projection (return all fields)
@@ -97,27 +137,14 @@ class SimpleDBQuery:
 
     ## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
     method where(field: string, operation: string, value: string): SimpleDBQuery {.gcsafe.} =
-
-        # Check input
-        if field.len == 0: raiseAssert("No field provided")
-        if operation.len == 0: raiseAssert("No operation provided")
-        if operation != "==" and operation != "!=" and operation != "<" and operation != "<=" and operation != ">" and operation != ">=": raiseAssert("Unknown operation '" & operation & "'")
-
-        # Add it
+        validateWhereParams(field, operation)
         let filter = SimpleDBFilter(field: field, operation: operation, value: value, fieldIsNumber: false)
         this.filters.add(filter)
         return this
 
-
     ## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
     method where(field: string, operation: string, value: float): SimpleDBQuery {.gcsafe.} =
-
-        # Check input
-        if field.len == 0: raiseAssert("No field provided")
-        if operation.len == 0: raiseAssert("No operation provided")
-        if operation != "==" and operation != "!=" and operation != "<" and operation != "<=" and operation != ">" and operation != ">=": raiseAssert("Unknown operation '" & operation & "'")
-
-        # Add it
+        validateWhereParams(field, operation)
         let filter = SimpleDBFilter(field: field, operation: operation, value: $value, fieldIsNumber: true)
         this.filters.add(filter)
         return this
@@ -127,8 +154,8 @@ class SimpleDBQuery:
     method filter(filterObj: JsonNode): SimpleDBQuery {.gcsafe.} =
 
         # Check input
-        if filterObj == nil or filterObj.kind != JObject: 
-            raiseAssert("Filter must be a JSON object")
+        if filterObj == nil or filterObj.kind != JObject:
+            raise newException(ValidationError, "Filter must be a JSON object")
 
         # Helper to convert JsonNode to string value
         proc jsonToString(node: JsonNode): string =
@@ -252,6 +279,37 @@ class SimpleDBQuery:
                         this.existsFilters.add(existsFilter)
                     processedSpecialOp = true
                 
+                # Check for $type operator
+                if "$type" in val:
+                    let typeVal = val["$type"]
+                    if typeVal.kind == JString:
+                        let typeFilter = SimpleDBTypeFilter(field: field, jsonType: typeVal.getStr())
+                        this.typeFilters.add(typeFilter)
+                    processedSpecialOp = true
+                
+                # Check for $regex operator
+                if "$regex" in val:
+                    let regexVal = val["$regex"]
+                    var pattern = ""
+                    var options = ""
+                    
+                    if regexVal.kind == JString:
+                        pattern = regexVal.getStr()
+                    elif regexVal.kind == JObject:
+                        if "$regex" in regexVal:
+                            let patNode = regexVal["$regex"]
+                            if patNode.kind == JString:
+                                pattern = patNode.getStr()
+                        if "$options" in regexVal:
+                            let optNode = regexVal["$options"]
+                            if optNode.kind == JString:
+                                options = optNode.getStr()
+                    
+                    if pattern.len > 0:
+                        let regexFilter = SimpleDBRegexFilter(field: field, pattern: pattern, options: options)
+                        this.regexFilters.add(regexFilter)
+                    processedSpecialOp = true
+                
                 # If we processed any special operator, skip regular processing
                 if processedSpecialOp:
                     continue
@@ -268,7 +326,8 @@ class SimpleDBQuery:
     method sort(field: string, ascending: bool = true, isNumber: bool = true): SimpleDBQuery {.gcsafe.} =
 
         # Check input
-        if field.len == 0: raiseAssert("No field provided")
+        if field.len == 0:
+            raise newException(ValidationError, "No field provided")
         
         # Store it
         this.sortField = field
@@ -281,7 +340,8 @@ class SimpleDBQuery:
     method limit(count: int): SimpleDBQuery {.gcsafe.} =
 
         # Check input
-        if count < -1: raiseAssert("Cannot use negative numbers for the limit")
+        if count < -1:
+            raise newException(ValidationError, "Cannot use negative numbers for the limit")
 
         # Store it
         this.pLimit = count
@@ -292,7 +352,8 @@ class SimpleDBQuery:
     method offset(count: int): SimpleDBQuery {.gcsafe.} =
 
         # Check input
-        if count < 0: raiseAssert("Cannot use negative numbers for the offset")
+        if count < 0:
+            raise newException(ValidationError, "Cannot use negative numbers for the offset")
 
         # Store it
         this.pOffset = count
@@ -306,7 +367,7 @@ class SimpleDBQuery:
 
         # Check input
         if projectionObj == nil or projectionObj.kind != JObject:
-            raiseAssert("Projection must be a JSON object")
+            raise newException(ValidationError, "Projection must be a JSON object")
 
         # Validate projection - check for mixed include/exclude
         var hasInclude = false
@@ -319,7 +380,7 @@ class SimpleDBQuery:
                     hasExclude = true
         
         if hasInclude and hasExclude:
-            raiseAssert("Cannot mix include and exclude in projection (except _id)")
+            raise newException(ValidationError, "Cannot mix include and exclude in projection (except _id)")
 
         # Store projection
         this.projection = projectionObj
@@ -416,7 +477,11 @@ class SimpleDB:
 
         # Create query object
         let q = SimpleDBQuery.init()
-        q.db = this
+        # Allocate a stable copy of SimpleDB on the heap
+        # This avoids the cast from RootRef and ensures the pointer remains valid
+        var dbCopy = cast[ptr SimpleDB](alloc0(sizeof(SimpleDB)))
+        dbCopy[] = this
+        q.db = dbCopy
         return q
 
 
@@ -573,18 +638,112 @@ proc buildExistsFilterSql(existsFilter: SimpleDBExistsFilter, bindValues: var se
     bindValues.add(existsFilter.field.toJsonPath())
 
 
+## Helper: Convert MongoDB-style type names to SQLite json_type values
+proc toJsonTypeName(mongoType: string): seq[string] =
+    # SQLite json_type returns: 'null', 'true', 'false', 'integer', 'real', 'text', 'array', 'object'
+    # MongoDB types: "string", "number", "boolean", "array", "object", "null"
+    case mongoType:
+        of "string": return @["text"]
+        of "number": return @["integer", "real"]
+        of "boolean": return @["true", "false"]
+        of "array": return @["array"]
+        of "object": return @["object"]
+        of "null": return @["null"]
+        else: return @[]
+
+
+## Helper: Build SQL condition for type filters
+proc buildTypeFilterSql(typeFilter: SimpleDBTypeFilter, bindValues: var seq[string]): string =
+    let sqliteTypes = toJsonTypeName(typeFilter.jsonType)
+    if sqliteTypes.len == 0:
+        return "1=1"  # Invalid type, match everything
+    
+    # Note: Use json_type(_json, path) directly, not json_type(json_extract(...))
+    # The latter causes "malformed JSON" errors in SQLite
+    if sqliteTypes.len == 1:
+        result &= "json_type(_json, ?) = ?"
+        bindValues.add(typeFilter.field.toJsonPath())
+        bindValues.add(sqliteTypes[0])
+    else:
+        # Multiple SQLite types (e.g., number = integer OR real)
+        result &= "json_type(_json, ?) IN ("
+        bindValues.add(typeFilter.field.toJsonPath())
+        for i in 0 ..< sqliteTypes.len:
+            if i > 0: result &= ", "
+            result &= "?"
+            bindValues.add(sqliteTypes[i])
+        result &= ")"
+
+
+## Helper: Convert regex pattern to SQL LIKE pattern
+## Note: This is a basic conversion. Complex regex features are not supported.
+## Supports: .* -> %, . -> _, * -> %, ? -> _
+proc regexToLikePattern(regexPattern: string): string =
+    result = regexPattern
+    
+    # Handle anchors first
+    let hasStartAnchor = result.startsWith("^")
+    let hasEndAnchor = result.endsWith("$")
+    
+    if hasStartAnchor:
+        result = result[1..^1]
+    if hasEndAnchor and result.len > 0:
+        result = result[0..^2]
+    
+    # Replace common regex patterns with LIKE patterns
+    # .* -> % (any characters)
+    result = result.replace(".*", "%")
+    # . -> _ (single character)
+    result = result.replace(".", "_")
+    # Also support shell-style wildcards
+    # * -> % (any characters)
+    result = result.replace("*", "%")
+    # ? -> _ (single character)
+    result = result.replace("?", "_")
+    
+    # If no start anchor, match anywhere
+    if not hasStartAnchor and not result.startsWith("%"):
+        result = "%" & result
+    
+    # If no end anchor, match anywhere
+    if not hasEndAnchor and not result.endsWith("%"):
+        result = result & "%"
+
+
+## Helper: Build SQL condition for regex filters
+proc buildRegexFilterSql(regexFilter: SimpleDBRegexFilter, bindValues: var seq[string]): string =
+    # Use LIKE for basic regex support (case-insensitive with options="i")
+    # GLOB is case-sensitive by default, LIKE is case-insensitive by default in SQLite
+    # We use LIKE for case-insensitive, GLOB for case-sensitive
+    
+    let likePattern = regexToLikePattern(regexFilter.pattern)
+    
+    # Check if case-insensitive is requested
+    let caseInsensitive = "i" in regexFilter.options
+    
+    if caseInsensitive or regexFilter.options.len == 0:
+        # Use LIKE (case-insensitive by default in SQLite)
+        result &= "json_extract(_json, ?) LIKE ? ESCAPE '\\'"
+    else:
+        # Use GLOB (case-sensitive)
+        result &= "json_extract(_json, ?) GLOB ?"
+    
+    bindValues.add(regexFilter.field.toJsonPath())
+    bindValues.add(likePattern)
+
+
 ## Execute the query and return all documents.
 proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[string]) =
 
     # Get database reference
-    let db = cast[SimpleDB](this.db)
+    let db = cast[ptr SimpleDB](this.db)[]
     
     # Build query
     var bindValues : seq[string]
     var sqlStr = sqlPrefix
 
     # Check if we have any filters
-    let hasFilters = this.filters.len > 0 or this.logicalFilters.len > 0 or this.arrayFilters.len > 0 or this.existsFilters.len > 0
+    let hasFilters = this.filters.len > 0 or this.logicalFilters.len > 0 or this.arrayFilters.len > 0 or this.existsFilters.len > 0 or this.typeFilters.len > 0 or this.regexFilters.len > 0
 
     # Add filters
     if hasFilters:
@@ -627,6 +786,18 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
             if addedFirst: sqlStr &= " AND "
             addedFirst = true
             sqlStr &= buildExistsFilterSql(existsFilter, bindValues)
+        
+        # Add type filters ($type)
+        for typeFilter in this.typeFilters:
+            if addedFirst: sqlStr &= " AND "
+            addedFirst = true
+            sqlStr &= buildTypeFilterSql(typeFilter, bindValues)
+        
+        # Add regex filters ($regex)
+        for regexFilter in this.regexFilters:
+            if addedFirst: sqlStr &= " AND "
+            addedFirst = true
+            sqlStr &= buildRegexFilterSql(regexFilter, bindValues)
             
     # Add sort (applies with or without filters)
     if this.sortField.len > 0:
@@ -664,16 +835,15 @@ proc applyProjection(doc: JsonNode, projection: JsonNode, includeMode: bool): Js
     if projection == nil or projection.kind != JObject:
         return doc
 
-    var result = newJObject()
-
     if includeMode:
         # Include mode: only include specified fields
+        var projected = newJObject()
         for field, val in projection:
             if val.getInt() == 1:
                 # Handle nested fields with dot notation
                 let parts = field.split('.')
                 var currentDoc = doc
-                var currentResult = result
+                var currentResult = projected
                 var found = true
 
                 for i, part in parts:
@@ -693,7 +863,8 @@ proc applyProjection(doc: JsonNode, projection: JsonNode, includeMode: bool): Js
 
                 # If not found as nested, try as flat field
                 if not found and doc.hasKey(field):
-                    result[field] = doc[field]
+                    projected[field] = doc[field]
+        return projected
     else:
         # Exclude mode: copy all fields except excluded ones
         result = doc.copy()
@@ -717,44 +888,80 @@ proc applyProjection(doc: JsonNode, projection: JsonNode, includeMode: bool): Js
                                 shouldDelete = false
                                 break
                         # Note: Full nested deletion is complex, skip for now
+        return result
 
-    return result
+
+## Helper: Check if projection has nested fields (contains dots)
+proc hasNestedFields(this: SimpleDBQuery): bool =
+    if this.projection == nil:
+        return false
+    for field, val in this.projection:
+        if val.getInt() == 1 and field.contains('.'):
+            return true
+    return false
+
+
+## Helper: Build SQL SELECT clause for projection
+proc buildProjectionSql(this: SimpleDBQuery): string =
+    ## Builds SQL SELECT clause using json_extract for include projections
+    ## Returns "SELECT _json" if no projection, exclude mode, or nested fields
+    ## Returns "SELECT json_object(...)" for flat include mode projections
+    
+    if this.projection == nil or not this.projectionInclude:
+        # No projection or exclude mode - fetch full document
+        return "SELECT _json FROM documents"
+    
+    # For nested fields, fall back to in-memory projection
+    if this.hasNestedFields():
+        return "SELECT _json FROM documents"
+    
+    # Include mode with only flat fields - build json_object
+    var extracts: seq[string] = @[]
+    for field, val in this.projection:
+        if val.getInt() == 1:
+            # Build json_extract for this field
+            let jsonPath = toJsonPath(field)
+            extracts.add("'" & field & "', json_extract(_json, '" & jsonPath & "')")
+    
+    if extracts.len == 0:
+        # No valid fields to include
+        return "SELECT _json FROM documents"
+    
+    return "SELECT json_object(" & extracts.join(", ") & ") FROM documents"
 
 
 ## Execute the query and return all documents.
 proc list*(this: SimpleDBQuery): seq[JsonNode] =
+    ## Returns all documents matching the query
+    ## 
+    ## Example:
+    ##   let docs = db.query().where("status", "==", "active").list()
+    
+    let db = cast[ptr SimpleDB](this.db)[]
+    
+    # Build SELECT clause based on projection
+    let selectPrefix = this.buildProjectionSql()
+    let (sqlStr, bindValues) = prepareQuerySql(this, selectPrefix)
 
-    # Get database reference
-    let db = cast[SimpleDB](this.db)
-
-    # Prepare the query
-    let (sqlStr, bindValues) = prepareQuerySql(this, "SELECT _json FROM documents")
-
-    # Run the query
-    var docs : seq[JsonNode]
     for row in db.conn.rows(sql(sqlStr), bindValues):
-
-        # Parse JSON for each result
         var doc = parseJson(row[0])
-
-        # Apply projection if specified
-        if this.projection != nil:
+        # Apply in-memory projection for:
+        # - Exclude mode (always done in memory)
+        # - Include mode with nested fields (fall back to in-memory)
+        if this.projection != nil and (not this.projectionInclude or this.hasNestedFields()):
             doc = applyProjection(doc, this.projection, this.projectionInclude)
-
-        docs.add(doc)
-
-    # Done
-    return docs
+        result.add(doc)
 
 
 ## Execute the query and iterate through the resulting documents.
 iterator list*(this: SimpleDBQuery): JsonNode =
 
     # Get database reference
-    let db = cast[SimpleDB](this.db)
+    let db = cast[ptr SimpleDB](this.db)[]
 
-    # Prepare the query
-    let (sqlStr, bindValues) = prepareQuerySql(this, "SELECT _json FROM documents")
+    # Build SELECT clause based on projection
+    let selectPrefix = this.buildProjectionSql()
+    let (sqlStr, bindValues) = prepareQuerySql(this, selectPrefix)
 
     # Run the query
     for row in db.conn.rows(sql(sqlStr), bindValues):
@@ -762,19 +969,46 @@ iterator list*(this: SimpleDBQuery): JsonNode =
         # Parse JSON for each result
         var doc = parseJson(row[0])
 
-        # Apply projection if specified
-        if this.projection != nil:
+        # Apply in-memory projection for:
+        # - Exclude mode (always done in memory)
+        # - Include mode with nested fields (fall back to in-memory)
+        if this.projection != nil and (not this.projectionInclude or this.hasNestedFields()):
             doc = applyProjection(doc, this.projection, this.projectionInclude)
 
         # Yield the document
         yield doc
 
 
+## Execute the query and return the query plan for analysis.
+## Returns a sequence of JsonNode with query plan details.
+proc explain*(this: SimpleDBQuery): seq[JsonNode] =
+
+    # Get database reference
+    let db = cast[ptr SimpleDB](this.db)[]
+
+    # Prepare the query SQL (but we don't need bind values for EXPLAIN)
+    let (sqlStr, bindValues) = prepareQuerySql(this, "SELECT _json FROM documents")
+
+    # Build EXPLAIN QUERY PLAN SQL
+    let explainSql = "EXPLAIN QUERY PLAN " & sqlStr
+
+    # Run the explain query
+    result = @[]
+    for row in db.conn.rows(sql(explainSql), bindValues):
+        # Each row contains: id, parent, notused, detail
+        result.add(%*{
+            "id": parseInt(row[0]),
+            "parent": parseInt(row[1]),
+            "notused": parseInt(row[2]),
+            "detail": row[3]
+        })
+
+
 ## Execute the query and return the count of matching documents.
 proc count*(this: SimpleDBQuery): int {.discardable.} =
 
     # Get database reference
-    let db = cast[SimpleDB](this.db)
+    let db = cast[ptr SimpleDB](this.db)[]
 
     # Prepare the query
     let (sqlStr, bindValues) = prepareQuerySql(this, "SELECT COUNT(*) FROM documents")
@@ -791,7 +1025,7 @@ proc count*(this: SimpleDBQuery): int {.discardable.} =
 proc distinctValues*(this: SimpleDBQuery, field: string): seq[string] {.gcsafe.} =
 
     # Get database reference
-    let db = cast[SimpleDB](this.db)
+    let db = cast[ptr SimpleDB](this.db)[]
 
     # Build SQL for distinct values using json_extract
     # Note: We need to handle the query filters but select distinct values
@@ -817,7 +1051,7 @@ proc distinctValues*(this: SimpleDBQuery, field: string): seq[string] {.gcsafe.}
 proc remove*(this: SimpleDBQuery): int {.discardable.} =
 
     # Get database reference
-    let db = cast[SimpleDB](this.db)
+    let db = cast[ptr SimpleDB](this.db)[]
 
     # Prepare the query
     let (sqlStr, bindValues) = prepareQuerySql(this, "DELETE FROM documents")
@@ -845,43 +1079,119 @@ proc get*(this: SimpleDB, id: string): JsonNode =
     return this.query().where("id", "==", id).get()
 
 
-## Helper: Remove a document with the specified ID. Returns true if the document was removed, or false if no document was found with this ID.
-proc remove*(this: SimpleDB, id: string): bool {.discardable.} = 
-    let numRemoved = this.query().where("id", "==", id).limit(1).remove()
-    return if numRemoved > 0: true else: false
+## Helper: Remove a document with the specified ID. Returns true if a document was removed.
+proc removeOne*(this: SimpleDB, id: string): bool =
+    return this.query().where("id", "==", id).limit(1).remove() > 0
 
 
 ## Update the documents matched by this query with the given fields. Returns the number of documents updated.
-## Supports MongoDB-style $set operator: {"$set": {"field": value}}
+## Supports MongoDB-style operators:
+##   $set: {"$set": {"field": value}} - Set field to value
+##   $inc: {"$inc": {"field": value}} - Increment field by value (default 0 if not exists)
+##   $mul: {"$mul": {"field": value}} - Multiply field by value (default 0 if not exists)
 proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
 
     # Check input
-    if updates == nil: raiseAssert("Cannot update with null document.")
-    if updates.kind != JObject: raiseAssert("Updates must be an object.")
+    if updates == nil:
+        raise newException(ValidationError, "Cannot update with null document")
+    if updates.kind != JObject:
+        raise newException(ValidationError, "Updates must be an object")
     if updates.len == 0: return 0
 
     # Get database reference
-    let db = cast[SimpleDB](this.db)
+    let db = cast[ptr SimpleDB](this.db)[]
 
-    # Extract $set if present (MongoDB-style)
-    var fieldsToUpdate = updates
-    if "$set" in updates:
-        fieldsToUpdate = updates["$set"]
-        if fieldsToUpdate.kind != JObject:
-            raiseAssert("$set value must be an object")
-    
-    # Build SET clause with json_set for each field
+    # Build json_set expression starting from _json
     var jsonSetExpr = "_json"
     
-    for key, value in fieldsToUpdate.pairs:
-        # Skip id field updates
-        if key == "id": continue
+    # Process $set operator
+    if "$set" in updates:
+        let fieldsToUpdate = updates["$set"]
+        if fieldsToUpdate.kind != JObject:
+            raise newException(ValidationError, "$set value must be an object")
         
-        # Build json_set expression - use $$ to escape $ for strutils.% operator
-        let jsonValue = if value.kind == JString: "\"" & value.getStr() & "\""
-                        else: $value
-        let jsonPath = "$$.$1" % key
-        jsonSetExpr = "json_set(" & jsonSetExpr & ", '" & jsonPath & "', " & jsonValue & ")"
+        for key, value in fieldsToUpdate.pairs:
+            # Skip id field updates
+            if key == "id": continue
+            
+            # Build json_set expression
+            let jsonValue = if value.kind == JString: "\"" & value.getStr() & "\""
+                            else: $value
+            let jsonPath = "$." & key
+            jsonSetExpr = "json_set(" & jsonSetExpr & ", '" & jsonPath & "', " & jsonValue & ")"
+    
+    # Process $inc operator (increment)
+    if "$inc" in updates:
+        let fieldsToInc = updates["$inc"]
+        if fieldsToInc.kind != JObject:
+            raise newException(ValidationError, "$inc value must be an object")
+        
+        for key, value in fieldsToInc.pairs:
+            # Skip id field updates
+            if key == "id": continue
+            
+            # Build json_set with COALESCE to handle non-existent fields (default to 0)
+            let incValue = if value.kind == JString: value.getStr()
+                           else: $value
+            let jsonPath = "$." & key
+            let extractExpr = "COALESCE(json_extract(_json, '" & jsonPath & "'), 0)"
+            let calcExpr = extractExpr & " + " & incValue
+            jsonSetExpr = "json_set(" & jsonSetExpr & ", '" & jsonPath & "', " & calcExpr & ")"
+    
+    # Process $mul operator (multiply)
+    if "$mul" in updates:
+        let fieldsToMul = updates["$mul"]
+        if fieldsToMul.kind != JObject:
+            raise newException(ValidationError, "$mul value must be an object")
+        
+        for key, value in fieldsToMul.pairs:
+            # Skip id field updates
+            if key == "id": continue
+            
+            # Build json_set with COALESCE to handle non-existent fields (default to 0)
+            let mulValue = if value.kind == JString: value.getStr()
+                           else: $value
+            let jsonPath = "$." & key
+            let extractExpr = "COALESCE(json_extract(_json, '" & jsonPath & "'), 0)"
+            let calcExpr = extractExpr & " * " & mulValue
+            jsonSetExpr = "json_set(" & jsonSetExpr & ", '" & jsonPath & "', " & calcExpr & ")"
+    
+    # Process $unset operator (remove fields)
+    if "$unset" in updates:
+        let fieldsToUnset = updates["$unset"]
+        if fieldsToUnset.kind != JObject:
+            raise newException(ValidationError, "$unset value must be an object")
+        
+        for key, value in fieldsToUnset.pairs:
+            # Skip id field updates
+            if key == "id": continue
+            
+            # Build json_remove expression
+            let jsonPath = "$." & key
+            jsonSetExpr = "json_remove(" & jsonSetExpr & ", '" & jsonPath & "')"
+    
+    # Process $rename operator (rename fields)
+    if "$rename" in updates:
+        let fieldsToRename = updates["$rename"]
+        if fieldsToRename.kind != JObject:
+            raise newException(ValidationError, "$rename value must be an object")
+        
+        for oldKey, newKeyNode in fieldsToRename.pairs:
+            # Skip id field updates
+            if oldKey == "id": continue
+            if newKeyNode.kind != JString:
+                raise newException(ValidationError, "$rename values must be strings")
+            let newKey = newKeyNode.getStr()
+            if newKey == "id":
+                raise newException(ValidationError, "Cannot rename to 'id' field")
+            
+            # First copy value to new key (if old key exists), then remove old key
+            let oldJsonPath = "$." & oldKey
+            let newJsonPath = "$." & newKey
+            # Copy: json_set(..., '$.newKey', json_extract(_json, '$.oldKey'))
+            let copyExpr = "json_set(" & jsonSetExpr & ", '" & newJsonPath & "', json_extract(_json, '" & oldJsonPath & "'))"
+            # Remove old: json_remove(..., '$.oldKey')
+            jsonSetExpr = "json_remove(" & copyExpr & ", '" & oldJsonPath & "')"
 
     # Build the full SQL
     var sqlStr = "UPDATE documents SET _json = " & jsonSetExpr
@@ -903,10 +1213,9 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
     return int db.conn.execAffectedRows(sql(sqlStr), bindValues)
 
 
-## Helper: Update a document with the specified ID. Returns true if the document was updated, or false if no document was found with this ID.
-proc update*(this: SimpleDB, id: string, updates: JsonNode): bool {.discardable.} =
-    let numUpdated = this.query().where("id", "==", id).limit(1).update(updates)
-    return if numUpdated > 0: true else: false
+## Helper: Update a document with the specified ID. Returns true if a document was updated.
+proc updateOne*(this: SimpleDB, id: string, updates: JsonNode): bool =
+    return this.query().where("id", "==", id).limit(1).update(updates) > 0
 
 ## Aggregate documents by a field and count them using SQL GROUP BY
 ## Returns a sequence of JsonNode with {"_id": fieldValue, "count": count}
@@ -941,16 +1250,145 @@ proc aggregateCount*(this: SimpleDB, collection: string, groupField: string, mat
     result = @[]
     for row in this.conn.rows(sql(sqlStr), allBindValues):
         if row[0].len > 0:
-            result.add(%*{"_id": row[0], "count": parseInt(row[1])})
+            result.add(%*{"id": row[0], "count": parseInt(row[1])})
+
+
+## Aggregation result type
+type AggregateResult* = object
+    groupId*: string
+    count*: int
+    sum*: float
+    avg*: float
+    min*: float
+    max*: float
+
+
+## Extended aggregation with multiple operators
+## Supports: $sum, $avg, $min, $max, $count
+## Example: aggregate("category", "amount", %*{ "$sum": "amount", "$avg": "amount" })
+proc aggregate*(this: SimpleDB, groupField: string, aggregations: JsonNode, matchFilter: JsonNode = nil): seq[AggregateResult] {.gcsafe.} =
+    ## Performs aggregation with multiple operators
+    ## groupField: Field to group by
+    ## aggregations: Json object with aggregation operators
+    ##   Example: %*{ "$sum": "amount", "$avg": "price", "$min": "stock" }
+    ## matchFilter: Optional filter to apply before aggregation
+    
+    # Prepare database
+    this.prepareDB()
+    
+    # Build base query
+    var query = this.query()
+    
+    # Apply filter if provided
+    if matchFilter != nil and matchFilter.len > 0:
+        query = query.filter(matchFilter)
+    
+    # Get the WHERE clause SQL
+    let (whereSql, bindValues) = prepareQuerySql(query, "")
+    
+    # Build SELECT clause
+    var selectFields = @[
+        "json_extract(_json, '$.' || ?) as _id",  # Group by field
+        "COUNT(*) as count"
+    ]
+    var allBindValues = @[groupField]
+    
+    # Parse aggregation operators
+    var hasSum = false
+    var hasAvg = false
+    var hasMin = false
+    var hasMax = false
+    var sumField = ""
+    var avgField = ""
+    var minField = ""
+    var maxField = ""
+    
+    if aggregations != nil and aggregations.kind == JObject:
+        if "$sum" in aggregations:
+            hasSum = true
+            sumField = aggregations["$sum"].getStr()
+            selectFields.add("SUM(CAST(json_extract(_json, '$.' || ?) AS REAL)) as sum_val")
+            allBindValues.add(sumField)
+        
+        if "$avg" in aggregations:
+            hasAvg = true
+            avgField = aggregations["$avg"].getStr()
+            selectFields.add("AVG(CAST(json_extract(_json, '$.' || ?) AS REAL)) as avg_val")
+            allBindValues.add(avgField)
+        
+        if "$min" in aggregations:
+            hasMin = true
+            minField = aggregations["$min"].getStr()
+            selectFields.add("MIN(CAST(json_extract(_json, '$.' || ?) AS REAL)) as min_val")
+            allBindValues.add(minField)
+        
+        if "$max" in aggregations:
+            hasMax = true
+            maxField = aggregations["$max"].getStr()
+            selectFields.add("MAX(CAST(json_extract(_json, '$.' || ?) AS REAL)) as max_val")
+            allBindValues.add(maxField)
+    
+    # Build full SQL
+    var sqlStr = "SELECT " & selectFields.join(", ") & " FROM documents"
+    
+    # Add WHERE clause if there are filters
+    if whereSql.len > 0:
+        sqlStr &= whereSql
+        allBindValues.add(bindValues)
+    
+    # Add GROUP BY
+    sqlStr &= " GROUP BY json_extract(_json, '$.' || ?)"
+    allBindValues.add(groupField)
+    
+    # Execute query
+    result = @[]
+    var colIndex = 0
+    for row in this.conn.rows(sql(sqlStr), allBindValues):
+        colIndex = 0
+        var res = AggregateResult()
+        res.groupId = row[colIndex]; colIndex += 1
+        res.count = parseInt(row[colIndex]); colIndex += 1
+        
+        if hasSum:
+            if row[colIndex].len > 0:
+                res.sum = parseFloat(row[colIndex])
+            colIndex += 1
+        
+        if hasAvg:
+            if row[colIndex].len > 0:
+                res.avg = parseFloat(row[colIndex])
+            colIndex += 1
+        
+        if hasMin:
+            if row[colIndex].len > 0:
+                res.min = parseFloat(row[colIndex])
+            colIndex += 1
+        
+        if hasMax:
+            if row[colIndex].len > 0:
+                res.max = parseFloat(row[colIndex])
+            colIndex += 1
+        
+        result.add(res)
+
 
 ## Put a new document into the database, or replace it if it already exists
 proc writeDocument(this: SimpleDB, document: JsonNode) =
 
     # Check input
-    if document == nil: raiseAssert("Cannot put a null document into the database.")
-    if document.kind != JObject: raiseAssert("Document must be an object.")
-    if document{"id"}.isNil: document["id"] = % $genOid()
-    if document{"id"}.kind != JString: raiseAssert("ID must be a string.")
+    if document == nil:
+        raise newException(DocumentError, "Cannot put a null document into the database")
+    if document.kind != JObject:
+        raise newException(DocumentError, "Document must be an object")
+
+    # Create a copy to avoid modifying the input
+    var docCopy = document.copy()
+
+    # Generate ID if not provided
+    if docCopy{"id"}.isNil:
+        docCopy["id"] = % $genOid()
+    if docCopy{"id"}.kind != JString:
+        raise newException(DocumentError, "Document ID must be a string")
 
     # Prepare database
     this.prepareDB()
@@ -960,7 +1398,7 @@ proc writeDocument(this: SimpleDB, document: JsonNode) =
     let cmd = sql(str)
 
     # First field is the JSON content
-    var args = @[ $document ]
+    var args = @[ $docCopy ]
 
     # Add fields for the extra columns
     for columnName in this.extraColumns:
@@ -969,7 +1407,7 @@ proc writeDocument(this: SimpleDB, document: JsonNode) =
         let fieldName = columnName.substr(0, columnName.len - 6)
 
         # Add it
-        args.add document{fieldName}.getStr()
+        args.add docCopy{fieldName}.getStr()
 
     # Bind and execute the query
     this.conn.exec(cmd, args)
@@ -978,17 +1416,21 @@ proc writeDocument(this: SimpleDB, document: JsonNode) =
 ## Put a new document into the database, merging the fields if it already exists
 proc put*(this: SimpleDB, document: JsonNode, merge: bool = false) =
 
-    # If not merging, just write it
+    # If not merging, just write it and return
     if not merge:
         this.writeDocument(document)
+        return
 
     # Check input
-    if document == nil: raiseAssert("Cannot put a null document into the database.")
-    if document.kind != JObject: raiseAssert("Document must be an object.")
+    if document == nil:
+        raise newException(DocumentError, "Cannot put a null document into the database")
+    if document.kind != JObject:
+        raise newException(DocumentError, "Document must be an object")
     if document{"id"}.isNil: 
         this.writeDocument(document)
         return
-    if document{"id"}.kind != JString: raiseAssert("ID must be a string.")
+    if document{"id"}.kind != JString:
+        raise newException(DocumentError, "Document ID must be a string")
 
     # Get existing document, or just save it normally if not found
     let id = document["id"].getStr()
@@ -1003,3 +1445,107 @@ proc put*(this: SimpleDB, document: JsonNode, merge: bool = false) =
 
     # Write it
     this.writeDocument(existingDoc)
+
+
+## Upsert a document: Update if it exists, insert if it doesn't.
+## Returns the number of documents affected (always 1).
+proc upsert*(this: SimpleDB, document: JsonNode): int {.discardable.} =
+
+    # Check input
+    if document == nil:
+        raise newException(DocumentError, "Cannot upsert a null document into the database")
+    if document.kind != JObject:
+        raise newException(DocumentError, "Document must be an object")
+
+    # Create a copy to avoid modifying the input
+    var docCopy = document.copy()
+
+    # Generate ID if not provided
+    if docCopy{"id"}.isNil:
+        docCopy["id"] = % $genOid()
+    if docCopy{"id"}.kind != JString:
+        raise newException(DocumentError, "Document ID must be a string")
+
+    # Get the ID
+    let id = docCopy["id"].getStr()
+
+    # Check if document exists
+    let existingDoc = this.get(id)
+    if existingDoc == nil:
+        # Document doesn't exist, insert it
+        this.writeDocument(docCopy)
+    else:
+        # Document exists, update it (full replace)
+        this.writeDocument(docCopy)
+    return 1
+
+
+## Upsert with merge: Update by merging fields if it exists, insert if it doesn't.
+## Returns the number of documents affected (always 1).
+proc upsert*(this: SimpleDB, document: JsonNode, merge: bool): int {.discardable.} =
+
+    # If not merging, use the simple upsert
+    if not merge:
+        return this.upsert(document)
+
+    # Check input
+    if document == nil:
+        raise newException(DocumentError, "Cannot upsert a null document into the database")
+    if document.kind != JObject:
+        raise newException(DocumentError, "Document must be an object")
+
+    # Create a copy to avoid modifying the input
+    var docCopy = document.copy()
+
+    # Generate ID if not provided
+    if docCopy{"id"}.isNil:
+        docCopy["id"] = % $genOid()
+    if docCopy{"id"}.kind != JString:
+        raise newException(DocumentError, "Document ID must be a string")
+
+    # Get the ID
+    let id = docCopy["id"].getStr()
+
+    # Check if document exists
+    var existingDoc = this.get(id)
+    if existingDoc == nil:
+        # Document doesn't exist, insert it
+        this.writeDocument(docCopy)
+    else:
+        # Document exists, merge new fields into existing document
+        for key, value in docCopy.pairs:
+            existingDoc[key] = value
+        this.writeDocument(existingDoc)
+    return 1
+
+## Bulk insert multiple documents efficiently
+## Returns the number of documents inserted
+proc bulkInsert*(this: SimpleDB, documents: seq[JsonNode]): int {.discardable.} =
+    ## Efficiently inserts multiple documents in a single transaction
+    ## Much faster than individual put() calls for large datasets
+    
+    if documents.len == 0:
+        return 0
+    
+    var count = 0
+    this.batch do():
+        for doc in documents:
+            this.put(doc)
+            count += 1
+    return count
+
+
+## Bulk delete multiple documents by ID
+## Returns the number of documents deleted
+proc bulkDelete*(this: SimpleDB, ids: seq[string]): int {.discardable.} =
+    ## Efficiently deletes multiple documents by ID in a single transaction
+    
+    if ids.len == 0:
+        return 0
+    
+    var count = 0
+    this.batch do():
+        for id in ids:
+            if this.removeOne(id):
+                count += 1
+    return count

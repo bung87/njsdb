@@ -93,11 +93,16 @@ suite "SimpleDB":
         db.put(doc)
 
         # Remove it
-        db.remove("doc1")
+        let removed = db.removeOne("doc1")
+        check removed == true
 
         # Try to get it back - should return nil
         var retrieved = db.get("doc1")
         check retrieved == nil
+
+        # Try to remove non-existent document
+        let removedAgain = db.removeOne("doc1")
+        check removedAgain == false
 
         # Clean up
         db.close()
@@ -332,13 +337,14 @@ suite "SimpleDB":
         # Put it - should generate ID
         db.put(doc)
 
-        # Get the generated ID from the document
-        let id = doc["id"].getStr()
-        check id.len > 0
-
-        # Get it back
-        var retrieved = db.get(id)
+        # Verify document was stored by querying for it
+        check db.query().count() == 1
+        var retrieved = db.query().where("name", "==", "No ID Document").get()
+        check retrieved != nil
         check retrieved["name"].getStr == "No ID Document"
+        check retrieved["value"].getInt == 42
+        # Verify ID was generated
+        check retrieved["id"].getStr.len > 0
 
         # Clean up
         db.close()
@@ -910,3 +916,158 @@ suite "SimpleDB Projection":
     check docs[0].hasKey("address")
     check docs[0]["address"].hasKey("city")
     check not docs[0].hasKey("email")
+
+
+suite "SimpleDB Extended Aggregation":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    # Seed test data - sales data
+    db.put(%*{ "id": "sale-1", "category": "electronics", "amount": 100.0, "quantity": 2 })
+    db.put(%*{ "id": "sale-2", "category": "electronics", "amount": 200.0, "quantity": 1 })
+    db.put(%*{ "id": "sale-3", "category": "electronics", "amount": 150.0, "quantity": 3 })
+    db.put(%*{ "id": "sale-4", "category": "clothing", "amount": 50.0, "quantity": 5 })
+    db.put(%*{ "id": "sale-5", "category": "clothing", "amount": 75.0, "quantity": 2 })
+
+  teardown:
+    db.close()
+
+  test "Aggregate with sum":
+    let result = db.aggregate("category", %*{ "$sum": "amount" })
+    check result.len == 2
+    
+    # Find electronics category
+    var electronicsFound = false
+    var clothingFound = false
+    for agg in result:
+      if agg.groupId == "electronics":
+        check agg.sum == 450.0  # 100 + 200 + 150
+        electronicsFound = true
+      elif agg.groupId == "clothing":
+        check agg.sum == 125.0  # 50 + 75
+        clothingFound = true
+    check electronicsFound
+    check clothingFound
+
+  test "Aggregate with avg":
+    let result = db.aggregate("category", %*{ "$avg": "amount" })
+    check result.len == 2
+    
+    for agg in result:
+      if agg.groupId == "electronics":
+        check agg.avg == 150.0  # (100 + 200 + 150) / 3
+      elif agg.groupId == "clothing":
+        check agg.avg == 62.5   # (50 + 75) / 2
+
+  test "Aggregate with min and max":
+    let result = db.aggregate("category", %*{ "$min": "amount", "$max": "amount" })
+    check result.len == 2
+    
+    for agg in result:
+      if agg.groupId == "electronics":
+        check agg.min == 100.0
+        check agg.max == 200.0
+      elif agg.groupId == "clothing":
+        check agg.min == 50.0
+        check agg.max == 75.0
+
+  test "Aggregate with multiple operators":
+    let result = db.aggregate("category", %*{ "$sum": "amount", "$avg": "quantity" })
+    check result.len == 2
+    
+    for agg in result:
+      if agg.groupId == "electronics":
+        check agg.sum == 450.0
+        check agg.avg == 2.0  # (2 + 1 + 3) / 3
+        check agg.count == 3
+      elif agg.groupId == "clothing":
+        check agg.sum == 125.0
+        check agg.avg == 3.5  # (5 + 2) / 2
+        check agg.count == 2
+
+  test "Aggregate with filter":
+    let filter = %*{ "amount": { "$gte": 100 } }
+    let result = db.aggregate("category", %*{ "$sum": "amount" }, filter)
+    
+    # Only electronics should remain (all have amount >= 100)
+    check result.len == 1
+    check result[0].groupId == "electronics"
+    check result[0].sum == 450.0
+
+
+suite "SimpleDB Bulk Operations":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+
+  teardown:
+    db.close()
+
+  test "Bulk insert documents":
+    let docs = @[
+      %*{ "id": "bulk-1", "name": "Item 1", "value": 10 },
+      %*{ "id": "bulk-2", "name": "Item 2", "value": 20 },
+      %*{ "id": "bulk-3", "name": "Item 3", "value": 30 },
+      %*{ "id": "bulk-4", "name": "Item 4", "value": 40 },
+      %*{ "id": "bulk-5", "name": "Item 5", "value": 50 }
+    ]
+    
+    let inserted = db.bulkInsert(docs)
+    check inserted == 5
+    check db.query().count() == 5
+    
+    # Verify all documents were inserted correctly
+    for i in 1..5:
+      let doc = db.get("bulk-" & $i)
+      check doc != nil
+      check doc["name"].getStr == "Item " & $i
+      check doc["value"].getInt == i * 10
+
+  test "Bulk delete documents":
+    # First insert some documents
+    for i in 1..10:
+      db.put(%*{ "id": "del-" & $i, "name": "Item " & $i })
+    
+    check db.query().count() == 10
+    
+    # Bulk delete specific IDs
+    let idsToDelete = @["del-2", "del-4", "del-6", "del-8", "del-10"]
+    let deleted = db.bulkDelete(idsToDelete)
+    check deleted == 5
+    check db.query().count() == 5
+    
+    # Verify correct documents were deleted
+    for i in 1..10:
+      let doc = db.get("del-" & $i)
+      if i mod 2 == 0:  # Even numbers were deleted
+        check doc == nil
+      else:
+        check doc != nil
+
+  test "Bulk insert with auto-generated IDs":
+    let docs = @[
+      %*{ "name": "Auto 1", "value": 1 },
+      %*{ "name": "Auto 2", "value": 2 },
+      %*{ "name": "Auto 3", "value": 3 }
+    ]
+    
+    let inserted = db.bulkInsert(docs)
+    check inserted == 3
+    
+    # Check that documents were inserted with generated IDs
+    check db.query().count() == 3
+    for i in 1..3:
+      let retrieved = db.query().where("name", "==", "Auto " & $i).get()
+      check retrieved != nil
+      check retrieved["id"].getStr.len > 0
+
+  test "Bulk operations with empty input":
+    let emptyDocs: seq[JsonNode] = @[]
+    let inserted = db.bulkInsert(emptyDocs)
+    check inserted == 0
+    
+    let emptyIds: seq[string] = @[]
+    let deleted = db.bulkDelete(emptyIds)
+    check deleted == 0
