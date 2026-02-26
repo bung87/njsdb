@@ -7,6 +7,20 @@ import db_connector/db_sqlite
 
 
 ##
+## Helper: Convert field name to SQLite JSON path
+## "user.name" -> "$.user.name"
+## "tags[0]" -> "$.tags[0]"
+proc toJsonPath(field: string): string =
+    if field.len == 0:
+        return "$"
+    # If already starts with $., return as-is
+    if field.startsWith("$."):
+        return field
+    # Otherwise, prepend $. for dot notation
+    return "$." & field
+
+
+##
 ## Query filter info
 class SimpleDBFilter:
     var field = ""
@@ -391,8 +405,8 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
             # Add the filter using json_extract to query within the JSON field
             if filter.operation == "IN":
                 # Handle IN operation with multiple values
-                sqlStr &= "json_extract(_json, '$.' || ?) IN ("
-                bindValues.add(filter.field)
+                sqlStr &= "json_extract(_json, ?) IN ("
+                bindValues.add(filter.field.toJsonPath())
                 for i in 0 ..< filter.values.len:
                     if i > 0: sqlStr &= ", "
                     sqlStr &= "?"
@@ -401,10 +415,10 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
             else:
                 # For numeric comparisons, cast json_extract result to REAL
                 if filter.fieldIsNumber:
-                    sqlStr &= "CAST(json_extract(_json, '$.' || ?) AS REAL) " & filter.operation & " CAST(? AS REAL)"
+                    sqlStr &= "CAST(json_extract(_json, ?) AS REAL) " & filter.operation & " CAST(? AS REAL)"
                 else:
-                    sqlStr &= "json_extract(_json, '$.' || ?) " & filter.operation & " ?"
-                bindValues.add(filter.field)
+                    sqlStr &= "json_extract(_json, ?) " & filter.operation & " ?"
+                bindValues.add(filter.field.toJsonPath())
                 bindValues.add(filter.value)
             
         # Add sort

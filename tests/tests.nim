@@ -414,3 +414,102 @@ suite "SimpleDB Remove Operations":
       .filter(filter)
       .remove()
     check numRemoved == 5
+
+
+suite "SimpleDB Nested Field Queries (Dot Notation)":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    # Seed test data with nested objects
+    db.put(%*{
+      "id": "user-1",
+      "name": "John Doe",
+      "user": {"name": "John", "age": 30},
+      "address": {"city": "NYC", "zipcode": "10001"},
+      "tags": ["vip", "premium"]
+    })
+    db.put(%*{
+      "id": "user-2",
+      "name": "Jane Smith",
+      "user": {"name": "Jane", "age": 25},
+      "address": {"city": "LA", "zipcode": "90001"},
+      "tags": ["standard"]
+    })
+    db.put(%*{
+      "id": "user-3",
+      "name": "Bob Wilson",
+      "user": {"name": "Bob", "age": 35},
+      "address": {"city": "NYC", "zipcode": "10002"},
+      "tags": ["vip"]
+    })
+
+  teardown:
+    db.close()
+
+  test "Query nested field with dot notation (string)":
+    let docs = db.query()
+      .where("user.name", "==", "John")
+      .list()
+    check docs.len == 1
+    check docs[0]["id"].getStr == "user-1"
+
+  test "Query nested field with dot notation (number)":
+    let docs = db.query()
+      .where("user.age", ">=", 30)
+      .list()
+    check docs.len == 2
+
+  test "Query deeply nested field":
+    let docs = db.query()
+      .where("address.city", "==", "NYC")
+      .list()
+    check docs.len == 2
+    check docs[0]["id"].getStr in ["user-1", "user-3"]
+    check docs[1]["id"].getStr in ["user-1", "user-3"]
+
+  test "Query nested field with zipcode":
+    let docs = db.query()
+      .where("address.zipcode", "==", "90001")
+      .list()
+    check docs.len == 1
+    check docs[0]["id"].getStr == "user-2"
+
+  test "Query nested field with not equal operator":
+    let docs = db.query()
+      .where("address.city", "!=", "NYC")
+      .list()
+    check docs.len == 1
+    check docs[0]["id"].getStr == "user-2"
+
+  test "Query nested field with greater than operator":
+    let docs = db.query()
+      .where("user.age", ">", 25)
+      .list()
+    check docs.len == 2
+
+  test "Query nested field with less than operator":
+    let docs = db.query()
+      .where("user.age", "<", 30)
+      .list()
+    check docs.len == 1
+    check docs[0]["id"].getStr == "user-2"
+
+  test "Query nested field combined with flat field":
+    let docs = db.query()
+      .where("address.city", "==", "NYC")
+      .where("user.age", ">=", 30)
+      .list()
+    check docs.len == 2
+
+  test "Query nested field with filter method":
+    let filter = %*{ "user.name": "Jane" }
+    let docs = db.query().filter(filter).list()
+    check docs.len == 1
+    check docs[0]["id"].getStr == "user-2"
+
+  test "Query nested field with $eq operator in filter":
+    let filter = %*{ "address.city": { "$eq": "LA" } }
+    let docs = db.query().filter(filter).list()
+    check docs.len == 1
+    check docs[0]["id"].getStr == "user-2"
