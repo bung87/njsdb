@@ -707,3 +707,93 @@ suite "SimpleDB Array Operators ($all, $size)":
     # tags contains "a" AND has 3 elements: doc-1
     check docs.len == 1
     check docs[0]["id"].getStr == "doc-1"
+
+
+suite "SimpleDB $exists Operator":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    # Seed test data - some with optional fields
+    # Note: SQLite json_extract returns NULL for both non-existent fields AND null values
+    # So $exists: true matches fields with non-null values
+    db.put(%*{
+      "id": "doc-1",
+      "name": "Item 1",
+      "status": "active",
+      "archived": false
+    })
+    db.put(%*{
+      "id": "doc-2",
+      "name": "Item 2",
+      "status": "inactive"
+      # archived field does not exist
+    })
+    db.put(%*{
+      "id": "doc-3",
+      "name": "Item 3",
+      "status": "active",
+      "archived": true
+    })
+    db.put(%*{
+      "id": "doc-4",
+      "name": "Item 4"
+      # status and archived do not exist
+    })
+
+  teardown:
+    db.close()
+
+  test "Filter with $exists: true - field has non-null value":
+    let filter = %*{
+      "status": { "$exists": true }
+    }
+    let docs = db.query().filter(filter).list()
+    # doc-1, doc-2, doc-3 have status field with non-null values
+    check docs.len == 3
+
+  test "Filter with $exists: false - field missing or null":
+    let filter = %*{
+      "status": { "$exists": false }
+    }
+    let docs = db.query().filter(filter).list()
+    # doc-4 does not have status field
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-4"
+
+  test "Filter with $exists: true on optional field":
+    let filter = %*{
+      "archived": { "$exists": true }
+    }
+    let docs = db.query().filter(filter).list()
+    # doc-1 and doc-3 have archived field with non-null values
+    check docs.len == 2
+
+  test "Filter with $exists: false on optional field":
+    let filter = %*{
+      "archived": { "$exists": false }
+    }
+    let docs = db.query().filter(filter).list()
+    # doc-2 and doc-4 do not have archived field
+    check docs.len == 2
+
+  test "Filter combining $exists: true with value filter":
+    let filter = %*{
+      "status": "active",
+      "archived": { "$exists": true }
+    }
+    let docs = db.query().filter(filter).list()
+    # status=active AND archived exists with value
+    # doc-1 and doc-3
+    check docs.len == 2
+
+  test "Filter combining $exists: false with other filters":
+    let filter = %*{
+      "status": "inactive",
+      "archived": { "$exists": false }
+    }
+    let docs = db.query().filter(filter).list()
+    # status=inactive AND archived does not exist
+    # Only doc-2
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-2"

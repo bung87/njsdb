@@ -54,6 +54,12 @@ class SimpleDBArrayFilter:
     var values: seq[string] = @[]  # For $all operation
     var size = 0  # For $size operation
 
+##
+## Exists filter for $exists operator
+class SimpleDBExistsFilter:
+    var field = ""
+    var exists = true  # true = field exists, false = field does not exist
+
 
 ##
 ## Query builder
@@ -70,6 +76,9 @@ class SimpleDBQuery:
 
     ## List of array filters ($all, $size)
     var arrayFilters: seq[SimpleDBArrayFilter]
+
+    ## List of exists filters ($exists)
+    var existsFilters: seq[SimpleDBExistsFilter]
 
     ## Sort field
     var sortField = ""
@@ -203,14 +212,14 @@ class SimpleDBQuery:
                     let logicalFilter = SimpleDBLogicalFilter(op: loAnd, filters: andFilters)
                     this.logicalFilters.add(logicalFilter)
 
-        # Check for array operators in field conditions
+        # Check for array operators and $exists in field conditions
         for field, val in filterObj:
             if field == "$or" or field == "$and":
                 continue
             
-            # Check for array operators
+            # Check for array operators and $exists
             if val.kind == JObject:
-                var processedArrayOp = false
+                var processedSpecialOp = false
                 
                 # Check for $all operator
                 if "$all" in val:
@@ -221,7 +230,7 @@ class SimpleDBQuery:
                             values.add(jsonToString(v))
                         let arrayFilter = SimpleDBArrayFilter(field: field, op: aoAll, values: values)
                         this.arrayFilters.add(arrayFilter)
-                    processedArrayOp = true
+                    processedSpecialOp = true
                 
                 # Check for $size operator
                 if "$size" in val:
@@ -229,10 +238,18 @@ class SimpleDBQuery:
                     if sizeVal.kind == JInt:
                         let arrayFilter = SimpleDBArrayFilter(field: field, op: aoSize, size: sizeVal.getInt())
                         this.arrayFilters.add(arrayFilter)
-                    processedArrayOp = true
+                    processedSpecialOp = true
                 
-                # If we processed any array operator, skip regular processing
-                if processedArrayOp:
+                # Check for $exists operator
+                if "$exists" in val:
+                    let existsVal = val["$exists"]
+                    if existsVal.kind == JBool:
+                        let existsFilter = SimpleDBExistsFilter(field: field, exists: existsVal.getBool())
+                        this.existsFilters.add(existsFilter)
+                    processedSpecialOp = true
+                
+                # If we processed any special operator, skip regular processing
+                if processedSpecialOp:
                     continue
             
             # Process as regular condition
@@ -510,6 +527,20 @@ proc buildArrayFilterSql(arrayFilter: SimpleDBArrayFilter, bindValues: var seq[s
             discard
 
 
+## Helper: Build SQL condition for exists filters
+proc buildExistsFilterSql(existsFilter: SimpleDBExistsFilter, bindValues: var seq[string]): string =
+    # Note: SQLite's json_extract returns NULL for both non-existent fields AND null values
+    # So $exists: true matches fields with non-null values
+    # And $exists: false matches non-existent fields OR null values
+    if existsFilter.exists:
+        # Field exists with non-null value
+        result &= "json_extract(_json, ?) IS NOT NULL"
+    else:
+        # Field does not exist or is null
+        result &= "json_extract(_json, ?) IS NULL"
+    bindValues.add(existsFilter.field.toJsonPath())
+
+
 ## Execute the query and return all documents.
 proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[string]) =
 
@@ -521,7 +552,7 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
     var sqlStr = sqlPrefix
 
     # Check if we have any filters
-    let hasFilters = this.filters.len > 0 or this.logicalFilters.len > 0 or this.arrayFilters.len > 0
+    let hasFilters = this.filters.len > 0 or this.logicalFilters.len > 0 or this.arrayFilters.len > 0 or this.existsFilters.len > 0
 
     # Add filters
     if hasFilters:
@@ -558,6 +589,12 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
             if addedFirst: sqlStr &= " AND "
             addedFirst = true
             sqlStr &= buildArrayFilterSql(arrayFilter, bindValues)
+
+        # Add exists filters ($exists)
+        for existsFilter in this.existsFilters:
+            if addedFirst: sqlStr &= " AND "
+            addedFirst = true
+            sqlStr &= buildExistsFilterSql(existsFilter, bindValues)
             
         # Add sort
         if this.sortField.len > 0:
