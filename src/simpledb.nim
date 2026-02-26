@@ -28,6 +28,9 @@ type FilterOp = enum
 type LogicalOp = enum
     loAnd, loOr
 
+type ArrayOp = enum
+    aoAll, aoElemMatch, aoSize
+
 ##
 ## Query filter info for a single condition
 class SimpleDBFilter:
@@ -43,6 +46,14 @@ class SimpleDBLogicalFilter:
     var op: LogicalOp
     var filters: seq[SimpleDBFilter]
 
+##
+## Array filter for array operations ($all, $size)
+class SimpleDBArrayFilter:
+    var field = ""
+    var op: ArrayOp
+    var values: seq[string] = @[]  # For $all operation
+    var size = 0  # For $size operation
+
 
 ##
 ## Query builder
@@ -56,6 +67,9 @@ class SimpleDBQuery:
 
     ## List of logical filter groups ($and, $or)
     var logicalFilters: seq[SimpleDBLogicalFilter]
+
+    ## List of array filters ($all, $size)
+    var arrayFilters: seq[SimpleDBArrayFilter]
 
     ## Sort field
     var sortField = ""
@@ -189,10 +203,39 @@ class SimpleDBQuery:
                     let logicalFilter = SimpleDBLogicalFilter(op: loAnd, filters: andFilters)
                     this.logicalFilters.add(logicalFilter)
 
-        # Process regular field conditions (not $or/$and)
+        # Check for array operators in field conditions
         for field, val in filterObj:
             if field == "$or" or field == "$and":
                 continue
+            
+            # Check for array operators
+            if val.kind == JObject:
+                var processedArrayOp = false
+                
+                # Check for $all operator
+                if "$all" in val:
+                    let allValues = val["$all"]
+                    if allValues.kind == JArray and allValues.len > 0:
+                        var values: seq[string] = @[]
+                        for v in allValues:
+                            values.add(jsonToString(v))
+                        let arrayFilter = SimpleDBArrayFilter(field: field, op: aoAll, values: values)
+                        this.arrayFilters.add(arrayFilter)
+                    processedArrayOp = true
+                
+                # Check for $size operator
+                if "$size" in val:
+                    let sizeVal = val["$size"]
+                    if sizeVal.kind == JInt:
+                        let arrayFilter = SimpleDBArrayFilter(field: field, op: aoSize, size: sizeVal.getInt())
+                        this.arrayFilters.add(arrayFilter)
+                    processedArrayOp = true
+                
+                # If we processed any array operator, skip regular processing
+                if processedArrayOp:
+                    continue
+            
+            # Process as regular condition
             let f = processCondition(field, val)
             if f.field.len > 0:
                 this.filters.add(f)
@@ -442,6 +485,31 @@ proc buildFilterSql(filter: SimpleDBFilter, bindValues: var seq[string]): string
         bindValues.add(filter.value)
 
 
+## Helper: Build SQL condition for array filters
+proc buildArrayFilterSql(arrayFilter: SimpleDBArrayFilter, bindValues: var seq[string]): string =
+    case arrayFilter.op:
+        of aoAll:
+            # $all - Array contains all specified values
+            # Use json_each to check if all values exist in the array
+            var conditions: seq[string] = @[]
+            for value in arrayFilter.values:
+                conditions.add("EXISTS (SELECT 1 FROM json_each(_json, ?) WHERE value = ?)")
+                bindValues.add(arrayFilter.field.toJsonPath())
+                bindValues.add(value)
+            result &= conditions.join(" AND ")
+        of aoSize:
+            # $size - Array has specific length
+            # Check if json_type is 'array' and length matches
+            # Use CAST to ensure proper comparison
+            result &= "json_type(json_extract(_json, ?)) = 'array' AND CAST(json_array_length(json_extract(_json, ?)) AS TEXT) = ?"
+            bindValues.add(arrayFilter.field.toJsonPath())
+            bindValues.add(arrayFilter.field.toJsonPath())
+            bindValues.add($arrayFilter.size)
+        of aoElemMatch:
+            # $elemMatch - Not implemented yet (requires complex subquery)
+            discard
+
+
 ## Execute the query and return all documents.
 proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[string]) =
 
@@ -453,7 +521,7 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
     var sqlStr = sqlPrefix
 
     # Check if we have any filters
-    let hasFilters = this.filters.len > 0 or this.logicalFilters.len > 0
+    let hasFilters = this.filters.len > 0 or this.logicalFilters.len > 0 or this.arrayFilters.len > 0
 
     # Add filters
     if hasFilters:
@@ -484,6 +552,12 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
                 firstInGroup = false
                 sqlStr &= buildFilterSql(filter, bindValues)
             sqlStr &= ")"
+
+        # Add array filters ($all, $size)
+        for arrayFilter in this.arrayFilters:
+            if addedFirst: sqlStr &= " AND "
+            addedFirst = true
+            sqlStr &= buildArrayFilterSql(arrayFilter, bindValues)
             
         # Add sort
         if this.sortField.len > 0:

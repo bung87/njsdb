@@ -602,3 +602,108 @@ suite "SimpleDB Logical Operators ($or, $and)":
     # doc-2 (A, inactive, priority=2)
     check docs.len == 1
     check docs[0]["id"].getStr == "doc-2"
+
+
+suite "SimpleDB Array Operators ($all, $size)":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    # Seed test data with arrays
+    db.put(%*{
+      "id": "doc-1",
+      "name": "Item 1",
+      "tags": ["a", "b", "c"],
+      "categories": ["electronics"]
+    })
+    db.put(%*{
+      "id": "doc-2",
+      "name": "Item 2",
+      "tags": ["a", "b"],
+      "categories": ["electronics", "gadgets"]
+    })
+    db.put(%*{
+      "id": "doc-3",
+      "name": "Item 3",
+      "tags": ["b", "c", "d"],
+      "categories": ["books"]
+    })
+    db.put(%*{
+      "id": "doc-4",
+      "name": "Item 4",
+      "tags": ["a"],
+      "categories": []
+    })
+
+  teardown:
+    db.close()
+
+  test "Filter with $all operator - single value":
+    let filter = %*{
+      "tags": { "$all": ["a"] }
+    }
+    let docs = db.query().filter(filter).list()
+    # doc-1 (a,b,c), doc-2 (a,b), doc-4 (a) contain "a"
+    check docs.len == 3
+
+  test "Filter with $all operator - multiple values":
+    let filter = %*{
+      "tags": { "$all": ["a", "b"] }
+    }
+    let docs = db.query().filter(filter).list()
+    # doc-1 (a,b,c) and doc-2 (a,b) contain both "a" and "b"
+    check docs.len == 2
+
+  test "Filter with $all operator - all three values":
+    let filter = %*{
+      "tags": { "$all": ["a", "b", "c"] }
+    }
+    let docs = db.query().filter(filter).list()
+    # Only doc-1 (a,b,c) contains all three
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-1"
+
+  test "Filter with $size operator":
+    let filter = %*{
+      "tags": { "$size": 2 }
+    }
+    let docs = db.query().filter(filter).list()
+    # doc-2 has 2 tags (a,b)
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-2"
+
+  test "Filter with $size operator - empty array":
+    let filter = %*{
+      "categories": { "$size": 0 }
+    }
+    let docs = db.query().filter(filter).list()
+    # doc-4 has empty categories
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-4"
+
+  test "Filter with $size operator - three elements":
+    let filter = %*{
+      "tags": { "$size": 3 }
+    }
+    let docs = db.query().filter(filter).list()
+    # doc-1 (a,b,c) and doc-3 (b,c,d) have 3 tags
+    check docs.len == 2
+
+  test "Filter combining $all with regular filter":
+    let filter = %*{
+      "name": "Item 1",
+      "tags": { "$all": ["a", "b"] }
+    }
+    let docs = db.query().filter(filter).list()
+    # name=Item1 AND tags contains (a,b)
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-1"
+
+  test "Filter combining $size with $all":
+    let filter = %*{
+      "tags": { "$all": ["a"], "$size": 3 }
+    }
+    let docs = db.query().filter(filter).list()
+    # tags contains "a" AND has 3 elements: doc-1
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-1"
