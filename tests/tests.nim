@@ -1,168 +1,416 @@
-# This is just an example to get you started. You may wish to put all of your
-# tests into a single file, or separate them into multiple `test1`, `test2`
-# etc. files (better names are recommended, just make sure the name starts with
-# the letter 't').
-#
-# To run these tests, simply execute `nimble test`.
-
+import unittest
+import std/[json, times, random, os]
 import simpledb
-import std/times
-import std/json
-import std/random
-import std/os
-import std/terminal
 
-
-
-# Helpers for testing
-proc group(str: string) = styledEcho "\n", fgBlue, "+ ", fgDefault, str
-proc test(str: string) = styledEcho fgGreen, "  + ", fgDefault, str
-proc warn(str: string) = styledEcho fgRed, "    ! ", fgDefault, str
-
-
-
-
-# Remove existing database if it exists
-group "Cleanup"
-test "Remove existing database"
-if fileExists("test.db"):
-    removeFile("test.db")
-
-
-
-
-
-# Open the database
-group "Database tests"
-test "Open database"
-var db = SimpleDB.init("test.db")
-
-
-
-
-
-# Add a document
-test "Add a document"
-db.put(%* {
-    "id": "1234",
-    "type": "replaced",
-})
-
-
-
-
-
-# Update a document
-test "Replace a document"
-db.put(%* {
-    "id": "1234",
-    "type": "example",
-    "data": "123456",
-    "timestamp": cpuTime(),
-    "isExample": true,
-    "otherInfo": nil
-})
-
-
-
-
-
-# Merge update a document
-test "Update a document"
-db.put(%* {
-    "id": "1234",
-    "otherInfo": "test"
-}, merge = true)
-
-# Test it
-let exampleDoc = db.get("1234")
-if exampleDoc{"type"}.getStr() != "example": raiseAssert("Wrong document returned.")
-if exampleDoc{"otherInfo"}.getStr() != "test": raiseAssert("Merged content was not saved.")
-if exampleDoc{"data"}.getStr() != "123456": raiseAssert("Content was not merged correctly.")
-
-
-
-
-
-# Batch add documents
-test "Batch updates"
-randomize()
-let batchedCount = 1000
-db.batch do():
-    for i in 0 .. batchedCount:
-        db.put(%* { "type": "batched", "index": i, "random": rand(1.0) })
-
-
-
-
-
-# Close and reopen the database
-test "Close and reopen database"
-db.close()
-db = SimpleDB.init("test.db")
-
-
-
-
-
-# Fetch a specific document
-test "Fetch a document by ID"
-let doc = db.get("1234")
-
-# Test results
-if doc == nil: raiseAssert("Unable to read document.")
-if doc{"type"}.getStr() != "example": raiseAssert("Invalid data")
-
-
-
-
-
-# Do a complex query
-test "Complex queries"
-let docs = db.query()
-    .where("type", "==", "batched")
-    .where("index", ">=", 100)
-    .where("index", "<", 120)
-    .sort("index", ascending = false)
-    .offset(5)
-    .limit(2)
-    .list()
-
-# Test results
-if docs.len != 2: raiseAssert("Wrong number of documents returned")
-if docs[0]["index"].getInt() != 114: raiseAssert("Wrong document returned")
-if docs[1]["index"].getInt() != 113: raiseAssert("Wrong document returned")
-
-
-
-
-
-# Iterator test
-test "Iterator"
-var count = 0
-for doc in db.query().where("type", "==", "batched").list():
-    count += 1
-    if doc{"type"}.getStr() != "batched": raiseAssert("Wrong document returned")
-    if count > 5: break
-
-
-
-
-
-# Delete a single item
-test "Delete a single document"
-db.remove("1234")
-
-
-
-
-
-# Delete multiple items
-test "Delete multiple documents"
-let removedCount = db.query()
-    .where("type", "==", "batched")
-    .where("index", ">", 100)
-    .remove()
-
-# Test results
-if removedCount != batchedCount - 100: raiseAssert("Different number of documents were removed than expected. expected=" & $(batchedCount - 100) & " removed=" & $removedCount)
+suite "SimpleDB Basic Operations":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+
+  teardown:
+    db.close()
+
+  test "Open and close database":
+    check db != nil
+
+  test "Put and get document":
+    let doc = %*{
+      "id": "test-1",
+      "name": "Test Document",
+      "value": 42
+    }
+    db.put(doc)
+    
+    let retrieved = db.get("test-1")
+    check retrieved != nil
+    check retrieved["name"].getStr == "Test Document"
+    check retrieved["value"].getInt == 42
+
+  test "Put document without ID generates ID":
+    let doc = %*{ "name": "No ID" }
+    db.put(doc)
+    check doc["id"].getStr.len > 0
+
+  test "Merge update document":
+    db.put(%*{
+      "id": "merge-test",
+      "field1": "original",
+      "field2": "keep"
+    })
+    
+    db.put(%*{
+      "id": "merge-test",
+      "field1": "updated"
+    }, merge = true)
+    
+    let retrieved = db.get("merge-test")
+    check retrieved["field1"].getStr == "updated"
+    check retrieved["field2"].getStr == "keep"
+
+  test "Replace document":
+    db.put(%*{
+      "id": "replace-test",
+      "field1": "original",
+      "field2": "original"
+    })
+    
+    db.put(%*{
+      "id": "replace-test",
+      "field3": "new"
+    })
+    
+    let retrieved = db.get("replace-test")
+    check retrieved["field3"].getStr == "new"
+    check retrieved.hasKey("field1") == false
+
+  test "Get non-existent document returns nil":
+    let retrieved = db.get("non-existent")
+    check retrieved == nil
+
+  test "Remove document by ID":
+    db.put(%*{ "id": "to-delete", "data": "value" })
+    check db.get("to-delete") != nil
+    
+    let removed = db.remove("to-delete")
+    check removed == true
+    check db.get("to-delete") == nil
+
+  test "Remove non-existent document returns false":
+    let removed = db.remove("non-existent")
+    check removed == false
+
+
+suite "SimpleDB Query Operations":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    # Seed test data
+    for i in 0 ..< 10:
+      db.put(%*{
+        "id": "doc-" & $i,
+        "type": "test",
+        "index": i,
+        "category": if i mod 2 == 0: "even" else: "odd",
+        "score": i.float * 10.0
+      })
+
+  teardown:
+    db.close()
+
+  test "Query with equality filter":
+    let docs = db.query()
+      .where("type", "==", "test")
+      .list()
+    check docs.len == 10
+
+  test "Query with greater than filter":
+    let docs = db.query()
+      .where("index", ">", 5)
+      .list()
+    check docs.len == 4
+    for doc in docs:
+      check doc["index"].getInt > 5
+
+  test "Query with less than filter":
+    let docs = db.query()
+      .where("index", "<", 3)
+      .list()
+    check docs.len == 3
+
+  test "Query with range filter":
+    let docs = db.query()
+      .where("index", ">=", 3)
+      .where("index", "<=", 6)
+      .list()
+    check docs.len == 4
+
+  test "Query with limit":
+    let docs = db.query()
+      .where("type", "==", "test")
+      .limit(5)
+      .list()
+    check docs.len == 5
+
+  test "Query with offset":
+    let docs = db.query()
+      .where("type", "==", "test")
+      .sort("index", ascending = true)
+      .offset(5)
+      .list()
+    check docs.len == 5
+    check docs[0]["index"].getInt == 5
+
+  test "Query with sort ascending":
+    let docs = db.query()
+      .where("type", "==", "test")
+      .sort("index", ascending = true)
+      .list()
+    check docs[0]["index"].getInt == 0
+    check docs[9]["index"].getInt == 9
+
+  test "Query with sort descending":
+    let docs = db.query()
+      .where("type", "==", "test")
+      .sort("index", ascending = false)
+      .list()
+    check docs[0]["index"].getInt == 9
+    check docs[9]["index"].getInt == 0
+
+  test "Query get single document":
+    let doc = db.query()
+      .where("id", "==", "doc-5")
+      .get()
+    check doc != nil
+    check doc["index"].getInt == 5
+
+  test "Query get non-existent returns nil":
+    let doc = db.query()
+      .where("id", "==", "non-existent")
+      .get()
+    check doc == nil
+
+  test "Query iterator":
+    var count = 0
+    for doc in db.query().where("type", "==", "test").list():
+      count += 1
+      check doc["type"].getStr == "test"
+    check count == 10
+
+
+suite "SimpleDB MongoDB-style Filter":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    # Seed test data
+    for i in 0 ..< 10:
+      db.put(%*{
+        "id": "doc-" & $i,
+        "type": "test",
+        "status": if i mod 3 == 0: "active" elif i mod 3 == 1: "pending" else: "inactive",
+        "priority": i,
+        "score": i.float * 10.0
+      })
+
+  teardown:
+    db.close()
+
+  test "Filter with $in operator":
+    let filter = %*{ "status": { "$in": ["active", "pending"] } }
+    let docs = db.query()
+      .where("type", "==", "test")
+      .filter(filter)
+      .list()
+    check docs.len == 7  # indices 0,1,3,4,6,7,9
+
+  test "Filter with $eq operator":
+    let filter = %*{ "status": { "$eq": "active" } }
+    let docs = db.query()
+      .where("type", "==", "test")
+      .filter(filter)
+      .list()
+    check docs.len == 4  # indices 0,3,6,9
+
+  test "Filter with $gt operator":
+    let filter = %*{ "priority": { "$gt": 5 } }
+    let docs = db.query()
+      .where("type", "==", "test")
+      .filter(filter)
+      .list()
+    check docs.len == 4  # indices 6,7,8,9
+
+  test "Filter with $gte operator":
+    let filter = %*{ "priority": { "$gte": 5 } }
+    let docs = db.query()
+      .where("type", "==", "test")
+      .filter(filter)
+      .list()
+    check docs.len == 5  # indices 5,6,7,8,9
+
+  test "Filter with $lt operator":
+    let filter = %*{ "priority": { "$lt": 3 } }
+    let docs = db.query()
+      .where("type", "==", "test")
+      .filter(filter)
+      .list()
+    check docs.len == 3  # indices 0,1,2
+
+  test "Filter with $lte operator":
+    let filter = %*{ "priority": { "$lte": 3 } }
+    let docs = db.query()
+      .where("type", "==", "test")
+      .filter(filter)
+      .list()
+    check docs.len == 4  # indices 0,1,2,3
+
+  test "Filter with $ne operator":
+    let filter = %*{ "status": { "$ne": "active" } }
+    let docs = db.query()
+      .where("type", "==", "test")
+      .filter(filter)
+      .list()
+    check docs.len == 6  # not indices 0,3,6,9
+
+  test "Filter with simple string value (implicit $eq)":
+    let filter = %*{ "status": "active" }
+    let docs = db.query()
+      .where("type", "==", "test")
+      .filter(filter)
+      .list()
+    check docs.len == 4
+
+  test "Filter with numeric value (implicit $eq)":
+    let filter = %*{ "priority": 5 }
+    let docs = db.query()
+      .where("type", "==", "test")
+      .filter(filter)
+      .list()
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-5"
+
+
+suite "SimpleDB Count and Distinct":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    for i in 0 ..< 10:
+      db.put(%*{
+        "id": "doc-" & $i,
+        "type": "count-test",
+        "category": if i mod 3 == 0: "A" elif i mod 3 == 1: "B" else: "C"
+      })
+
+  teardown:
+    db.close()
+
+  test "Count documents":
+    let count = db.query()
+      .where("type", "==", "count-test")
+      .count()
+    check count == 10
+
+  test "Count with filter":
+    let filter = %*{ "category": "A" }
+    let count = db.query()
+      .where("type", "==", "count-test")
+      .filter(filter)
+      .count()
+    check count == 4  # indices 0,3,6,9
+
+  test "Distinct values":
+    let values = db.query()
+      .where("type", "==", "count-test")
+      .distinctValues("category")
+    check values.len == 3
+    check "A" in values
+    check "B" in values
+    check "C" in values
+
+
+suite "SimpleDB Update Operations":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    for i in 0 ..< 5:
+      db.put(%*{
+        "id": "doc-" & $i,
+        "type": "update-test",
+        "status": "pending",
+        "count": i
+      })
+
+  teardown:
+    db.close()
+
+  test "Update single document":
+    let updates = %*{ "status": "completed" }
+    let numUpdated = db.query()
+      .where("id", "==", "doc-2")
+      .update(updates)
+    check numUpdated == 1
+    
+    let doc = db.get("doc-2")
+    check doc["status"].getStr == "completed"
+    check doc["count"].getInt == 2  # Other fields preserved
+
+  test "Update multiple documents":
+    let updates = %*{ "status": "archived" }
+    let numUpdated = db.query()
+      .where("type", "==", "update-test")
+      .update(updates)
+    check numUpdated == 5
+    
+    for i in 0 ..< 5:
+      let doc = db.get("doc-" & $i)
+      check doc["status"].getStr == "archived"
+
+  test "Update with $set":
+    let updates = %*{ "$set": { "status": "active", "count": 100 } }
+    let numUpdated = db.query()
+      .where("id", "==", "doc-0")
+      .limit(1)
+      .update(updates)
+    check numUpdated == 1
+    
+    let doc = db.get("doc-0")
+    check doc["status"].getStr == "active"
+    check doc["count"].getInt == 100
+
+  test "Update multiple fields directly":
+    let updates = %*{ "status": "archived", "count": 999 }
+    let numUpdated = db.query()
+      .where("id", "==", "doc-1")
+      .limit(1)
+      .update(updates)
+    check numUpdated == 1
+    
+    let doc = db.get("doc-1")
+    check doc["status"].getStr == "archived"
+    check doc["count"].getInt == 999
+
+
+suite "SimpleDB Remove Operations":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    for i in 0 ..< 10:
+      db.put(%*{
+        "id": "doc-" & $i,
+        "type": "remove-test",
+        "status": if i < 5: "old" else: "new"
+      })
+
+  teardown:
+    db.close()
+
+  test "Remove single document by query":
+    let numRemoved = db.query()
+      .where("id", "==", "doc-0")
+      .limit(1)
+      .remove()
+    check numRemoved == 1
+    check db.get("doc-0") == nil
+
+  test "Remove multiple documents by query":
+    let numRemoved = db.query()
+      .where("status", "==", "old")
+      .remove()
+    check numRemoved == 5
+    
+    for i in 0 ..< 5:
+      check db.get("doc-" & $i) == nil
+    for i in 5 ..< 10:
+      check db.get("doc-" & $i) != nil
+
+  test "Remove with filter":
+    let filter = %*{ "status": "new" }
+    let numRemoved = db.query()
+      .where("type", "==", "remove-test")
+      .filter(filter)
+      .remove()
+    check numRemoved == 5

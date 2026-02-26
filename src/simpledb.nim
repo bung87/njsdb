@@ -12,6 +12,7 @@ class SimpleDBFilter:
     var field = ""
     var operation = ""
     var value = ""
+    var values: seq[string] = @[]  # For IN operations
     var fieldIsNumber = false
 
 
@@ -37,7 +38,7 @@ class SimpleDBQuery:
     var pOffset = 0
 
     ## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
-    method where(field: string, operation: string, value: string): SimpleDBQuery =
+    method where(field: string, operation: string, value: string): SimpleDBQuery {.gcsafe.} =
 
         # Check input
         if field.len == 0: raiseAssert("No field provided")
@@ -51,7 +52,7 @@ class SimpleDBQuery:
 
 
     ## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
-    method where(field: string, operation: string, value: float): SimpleDBQuery =
+    method where(field: string, operation: string, value: float): SimpleDBQuery {.gcsafe.} =
 
         # Check input
         if field.len == 0: raiseAssert("No field provided")
@@ -64,8 +65,88 @@ class SimpleDBQuery:
         return this
     
 
+    ## (chainable) Add a filter from a JsonNode filter object (supports MongoDB-style $in)
+    method filter(filterObj: JsonNode): SimpleDBQuery {.gcsafe.} =
+
+        # Check input
+        if filterObj == nil or filterObj.kind != JObject: 
+            raiseAssert("Filter must be a JSON object")
+
+        # Helper to convert JsonNode to string value
+        proc jsonToString(node: JsonNode): string =
+            case node.kind:
+                of JString: return node.getStr()
+                of JInt: return $node.getInt()
+                of JFloat: return $node.getFloat()
+                of JBool: return $node.getBool()
+                else: return $node
+
+        # Process each field in the filter
+        for field, val in filterObj:
+            if val.kind == JObject:
+                # Check for MongoDB-style operators like $in
+                if "$in" in val:
+                    let inValues = val["$in"]
+                    if inValues.kind == JArray and inValues.len > 0:
+                        var values: seq[string] = @[]
+                        for v in inValues:
+                            values.add(jsonToString(v))
+                        let filter = SimpleDBFilter(field: field, operation: "IN", values: values, fieldIsNumber: false)
+                        this.filters.add(filter)
+                elif "$eq" in val:
+                    # $eq operator - equality
+                    let eqVal = val["$eq"]
+                    let isNum = eqVal.kind == JInt or eqVal.kind == JFloat
+                    let filter = SimpleDBFilter(field: field, operation: "==", value: jsonToString(eqVal), fieldIsNumber: isNum)
+                    this.filters.add(filter)
+                elif "$ne" in val:
+                    # $ne operator - not equal
+                    let neVal = val["$ne"]
+                    let isNum = neVal.kind == JInt or neVal.kind == JFloat
+                    let filter = SimpleDBFilter(field: field, operation: "!=", value: jsonToString(neVal), fieldIsNumber: isNum)
+                    this.filters.add(filter)
+                elif "$gt" in val:
+                    # $gt operator - greater than
+                    let gtVal = val["$gt"]
+                    let isNum = gtVal.kind == JInt or gtVal.kind == JFloat
+                    let filter = SimpleDBFilter(field: field, operation: ">", value: jsonToString(gtVal), fieldIsNumber: isNum)
+                    this.filters.add(filter)
+                elif "$gte" in val:
+                    # $gte operator - greater than or equal
+                    let gteVal = val["$gte"]
+                    let isNum = gteVal.kind == JInt or gteVal.kind == JFloat
+                    let filter = SimpleDBFilter(field: field, operation: ">=", value: jsonToString(gteVal), fieldIsNumber: isNum)
+                    this.filters.add(filter)
+                elif "$lt" in val:
+                    # $lt operator - less than
+                    let ltVal = val["$lt"]
+                    let isNum = ltVal.kind == JInt or ltVal.kind == JFloat
+                    let filter = SimpleDBFilter(field: field, operation: "<", value: jsonToString(ltVal), fieldIsNumber: isNum)
+                    this.filters.add(filter)
+                elif "$lte" in val:
+                    # $lte operator - less than or equal
+                    let lteVal = val["$lte"]
+                    let isNum = lteVal.kind == JInt or lteVal.kind == JFloat
+                    let filter = SimpleDBFilter(field: field, operation: "<=", value: jsonToString(lteVal), fieldIsNumber: isNum)
+                    this.filters.add(filter)
+            elif val.kind == JString:
+                # Simple string equality
+                let filter = SimpleDBFilter(field: field, operation: "==", value: val.getStr(), fieldIsNumber: false)
+                this.filters.add(filter)
+            elif val.kind == JInt or val.kind == JFloat:
+                # Numeric equality
+                let filter = SimpleDBFilter(field: field, operation: "==", value: $val, fieldIsNumber: true)
+                this.filters.add(filter)
+            elif val.kind == JBool:
+                # Boolean equality
+                let filter = SimpleDBFilter(field: field, operation: "==", value: $val.getBool(), fieldIsNumber: false)
+                this.filters.add(filter)
+        
+        return this
+    
+
     ## (chainable) Set sort field
-    method sort(field: string, ascending: bool = true, isNumber: bool = true): SimpleDBQuery =
+    method sort(field: string, ascending: bool = true, isNumber: bool = true): SimpleDBQuery {.gcsafe.} =
 
         # Check input
         if field.len == 0: raiseAssert("No field provided")
@@ -78,7 +159,7 @@ class SimpleDBQuery:
     
 
     ## (chainable) Set the maximum number of documents to return, or -1 to return all documents.
-    method limit(count: int): SimpleDBQuery =
+    method limit(count: int): SimpleDBQuery {.gcsafe.} =
 
         # Check input
         if count < -1: raiseAssert("Cannot use negative numbers for the limit")
@@ -89,7 +170,7 @@ class SimpleDBQuery:
 
 
     ## (chainable) Set the number of documents to skip
-    method offset(count: int): SimpleDBQuery =
+    method offset(count: int): SimpleDBQuery {.gcsafe.} =
 
         # Check input
         if count < 0: raiseAssert("Cannot use negative numbers for the offset")
@@ -118,14 +199,14 @@ class SimpleDB:
     var createdIndexHashes: seq[string]
 
     ## Constructor
-    method init(filename: string) =
+    method init(filename: string) {.gcsafe.} =
 
         # Create the database connection
         this.conn = open(filename, "", "", "")
 
 
     ## Close the database
-    method close() =
+    method close() {.gcsafe.} =
 
         # Close database
         if this.conn != nil:
@@ -134,7 +215,7 @@ class SimpleDB:
 
 
     ## (private) Prepare the datatabase for use
-    method prepareDB() =
+    method prepareDB() {.gcsafe.} =
 
         # Only do once
         if this.hasPrepared: return
@@ -154,7 +235,7 @@ class SimpleDB:
 
 
     ## Execute a batch of transactions. Either they all succeed, or the database will not be updated. This is also much faster when saving lots of documents at once.
-    method batch(code: proc()) =
+    method batch(code: proc() {.gcsafe.}) {.gcsafe.} =
 
         # Prepate database
         this.prepareDB()
@@ -181,7 +262,7 @@ class SimpleDB:
 
 
     ## Start a query
-    method query(): SimpleDBQuery =
+    method query(): SimpleDBQuery {.gcsafe.} =
 
         # Prepare database
         this.prepareDB()
@@ -193,7 +274,7 @@ class SimpleDB:
 
 
     ## (private) Ensure column exists for the specified field
-    method createIndexableColumnForField(name: string, sqlName: string, sqlType: string) =
+    method createIndexableColumnForField(name: string, sqlName: string, sqlType: string) {.gcsafe.} =
 
         # Stop if already created
         if this.extraColumns.contains(sqlName):
@@ -231,7 +312,7 @@ class SimpleDB:
 
 
     ## (private) Create an index for the specified query, if needed
-    method createIndex(query: SimpleDBQuery) =
+    method createIndex(query: SimpleDBQuery) {.gcsafe.} =
 
         # Stop if no index is needed, ie this query returns all data directly
         if query.sortField == "" and query.filters.len == 0:
@@ -303,20 +384,28 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
         var addedFirst = false
         for filter in this.filters:
 
-            # Get SQL column info
-            var sqlType = if filter.fieldIsNumber: "REAL" else: "TEXT"
-            var sqlName = filter.field & "_" & sqlType
-
-            # Ensure an indexable column exists for this field
-            db.createIndexableColumnForField(filter.field, sqlName, sqlType)
-
             # Add the 'AND' if this is not the first filter
             if addedFirst: sqlStr &= " AND "
             addedFirst = true
 
-            # Add the filter
-            sqlStr &= "\"" & sqlName & "\" " & filter.operation & " ?"
-            bindValues.add(filter.value)
+            # Add the filter using json_extract to query within the JSON field
+            if filter.operation == "IN":
+                # Handle IN operation with multiple values
+                sqlStr &= "json_extract(_json, '$.' || ?) IN ("
+                bindValues.add(filter.field)
+                for i in 0 ..< filter.values.len:
+                    if i > 0: sqlStr &= ", "
+                    sqlStr &= "?"
+                    bindValues.add(filter.values[i])
+                sqlStr &= ")"
+            else:
+                # For numeric comparisons, cast json_extract result to REAL
+                if filter.fieldIsNumber:
+                    sqlStr &= "CAST(json_extract(_json, '$.' || ?) AS REAL) " & filter.operation & " CAST(? AS REAL)"
+                else:
+                    sqlStr &= "json_extract(_json, '$.' || ?) " & filter.operation & " ?"
+                bindValues.add(filter.field)
+                bindValues.add(filter.value)
             
         # Add sort
         if this.sortField.len > 0:
@@ -331,9 +420,12 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
             # Add the sort
             sqlStr &= " ORDER BY \"" & sqlName & "\" " & (if this.sortAscending: "asc" else: "desc")
             
-        # Add limit
+        # Add limit (required before OFFSET in SQLite)
         if this.pLimit >= 0:
             sqlStr &= " LIMIT " & $this.pLimit
+        elif this.pOffset > 0:
+            # SQLite requires LIMIT when using OFFSET
+            sqlStr &= " LIMIT -1"
 
         # Add offset
         if this.pOffset > 0:
@@ -382,6 +474,49 @@ iterator list*(this: SimpleDBQuery): JsonNode =
         yield parseJson(row[0])
 
 
+## Execute the query and return the count of matching documents.
+proc count*(this: SimpleDBQuery): int {.discardable.} =
+
+    # Get database reference
+    let db = cast[SimpleDB](this.db)
+
+    # Prepare the query
+    let (sqlStr, bindValues) = prepareQuerySql(this, "SELECT COUNT(*) FROM documents")
+
+    # Run the query and get the count
+    let countStr = db.conn.getValue(sql(sqlStr), bindValues)
+    if countStr.len > 0:
+        return parseInt(countStr)
+    else:
+        return 0
+
+
+## Execute the query and return distinct values for a field using SQL DISTINCT.
+proc distinctValues*(this: SimpleDBQuery, field: string): seq[string] {.gcsafe.} =
+
+    # Get database reference
+    let db = cast[SimpleDB](this.db)
+
+    # Build SQL for distinct values using json_extract
+    # Note: We need to handle the query filters but select distinct values
+    let (whereSql, bindValues) = prepareQuerySql(this, "")
+    
+    # Build the full SQL with DISTINCT and json_extract
+    var sqlStr = "SELECT DISTINCT json_extract(_json, '$.' || ?) FROM documents"
+    var allBindValues = @[field]
+    
+    # Add WHERE clause if there are filters
+    if whereSql.len > 0:
+        sqlStr &= whereSql
+        allBindValues.add(bindValues)
+
+    # Run the query
+    result = @[]
+    for row in db.conn.rows(sql(sqlStr), allBindValues):
+        if row[0].len > 0:
+            result.add(row[0])
+
+
 ## Remove the documents matched by this query.
 proc remove*(this: SimpleDBQuery): int {.discardable.} =
 
@@ -418,6 +553,99 @@ proc get*(this: SimpleDB, id: string): JsonNode =
 proc remove*(this: SimpleDB, id: string): bool {.discardable.} = 
     let numRemoved = this.query().where("id", "==", id).limit(1).remove()
     return if numRemoved > 0: true else: false
+
+
+## Update the documents matched by this query with the given fields. Returns the number of documents updated.
+## Supports MongoDB-style $set operator: {"$set": {"field": value}}
+proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
+
+    # Check input
+    if updates == nil: raiseAssert("Cannot update with null document.")
+    if updates.kind != JObject: raiseAssert("Updates must be an object.")
+    if updates.len == 0: return 0
+
+    # Get database reference
+    let db = cast[SimpleDB](this.db)
+
+    # Extract $set if present (MongoDB-style)
+    var fieldsToUpdate = updates
+    if "$set" in updates:
+        fieldsToUpdate = updates["$set"]
+        if fieldsToUpdate.kind != JObject:
+            raiseAssert("$set value must be an object")
+    
+    # Build SET clause with json_set for each field
+    var jsonSetExpr = "_json"
+    
+    for key, value in fieldsToUpdate.pairs:
+        # Skip id field updates
+        if key == "id": continue
+        
+        # Build json_set expression - use $$ to escape $ for strutils.% operator
+        let jsonValue = if value.kind == JString: "\"" & value.getStr() & "\""
+                        else: $value
+        let jsonPath = "$$.$1" % key
+        jsonSetExpr = "json_set(" & jsonSetExpr & ", '" & jsonPath & "', " & jsonValue & ")"
+
+    # Build the full SQL
+    var sqlStr = "UPDATE documents SET _json = " & jsonSetExpr
+    
+    # Add WHERE clause using json_extract
+    var bindValues: seq[string] = @[]
+    if this.filters.len > 0:
+        sqlStr &= " WHERE "
+        var addedFirst = false
+        for filter in this.filters:
+            if addedFirst: sqlStr &= " AND "
+            addedFirst = true
+            
+            sqlStr &= "json_extract(_json, '$.' || ?) " & filter.operation & " ?"
+            bindValues.add(filter.field)
+            bindValues.add(filter.value)
+    
+    # Execute the query with only filter bind values (no set values needed for json_set)
+    return int db.conn.execAffectedRows(sql(sqlStr), bindValues)
+
+
+## Helper: Update a document with the specified ID. Returns true if the document was updated, or false if no document was found with this ID.
+proc update*(this: SimpleDB, id: string, updates: JsonNode): bool {.discardable.} =
+    let numUpdated = this.query().where("id", "==", id).limit(1).update(updates)
+    return if numUpdated > 0: true else: false
+
+## Aggregate documents by a field and count them using SQL GROUP BY
+## Returns a sequence of JsonNode with {"_id": fieldValue, "count": count}
+proc aggregateCount*(this: SimpleDB, collection: string, groupField: string, matchFilter: JsonNode = nil): seq[JsonNode] {.gcsafe.} =
+    # Prepare database
+    this.prepareDB()
+    
+    # Build base query with collection filter
+    var query = this.query().where("_collection", "==", collection)
+    
+    # Apply additional filters if provided
+    if matchFilter != nil and matchFilter.len > 0:
+        query = query.filter(matchFilter)
+    
+    # Get the WHERE clause SQL
+    let (whereSql, bindValues) = prepareQuerySql(query, "")
+    
+    # Build aggregate SQL using json_extract for GROUP BY
+    var sqlStr = "SELECT json_extract(_json, '$.' || ?), COUNT(*) FROM documents"
+    var allBindValues = @[groupField]
+    
+    # Add WHERE clause if there are filters
+    if whereSql.len > 0:
+        sqlStr &= whereSql
+        allBindValues.add(bindValues)
+    
+    # Add GROUP BY
+    sqlStr &= " GROUP BY json_extract(_json, '$.' || ?)"
+    allBindValues.add(groupField)
+    
+    # Execute query
+    result = @[]
+    for row in this.conn.rows(sql(sqlStr), allBindValues):
+        if row[0].len > 0:
+            result.add(%*{"_id": row[0], "count": parseInt(row[1])})
 
 ## Put a new document into the database, or replace it if it already exists
 proc writeDocument(this: SimpleDB, document: JsonNode) =

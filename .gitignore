@@ -1,2 +1,5 @@
 test.db
 tests/tests
+nimble.develop
+nimble.paths
+nimbledeps
