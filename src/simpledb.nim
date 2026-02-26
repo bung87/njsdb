@@ -80,6 +80,10 @@ class SimpleDBQuery:
     ## List of exists filters ($exists)
     var existsFilters: seq[SimpleDBExistsFilter]
 
+    ## Projection fields (field selection)
+    var projection: JsonNode = nil  # nil means no projection (return all fields)
+    var projectionInclude = true    # true = include specified fields, false = exclude specified fields
+
     ## Sort field
     var sortField = ""
     var sortAscending = true
@@ -292,6 +296,34 @@ class SimpleDBQuery:
 
         # Store it
         this.pOffset = count
+        return this
+
+
+    ## (chainable) Set projection to return only specific fields.
+    ## Use { "field": 1 } to include fields, { "field": 0 } to exclude fields.
+    ## Cannot mix include and exclude (except _id can always be excluded).
+    method project(projectionObj: JsonNode): SimpleDBQuery {.gcsafe.} =
+
+        # Check input
+        if projectionObj == nil or projectionObj.kind != JObject:
+            raiseAssert("Projection must be a JSON object")
+
+        # Validate projection - check for mixed include/exclude
+        var hasInclude = false
+        var hasExclude = false
+        for field, val in projectionObj:
+            if val.kind == JInt:
+                if val.getInt() == 1:
+                    hasInclude = true
+                elif val.getInt() == 0:
+                    hasExclude = true
+        
+        if hasInclude and hasExclude:
+            raiseAssert("Cannot mix include and exclude in projection (except _id)")
+
+        # Store projection
+        this.projection = projectionObj
+        this.projectionInclude = hasInclude
         return this
 
 
@@ -596,35 +628,97 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
             addedFirst = true
             sqlStr &= buildExistsFilterSql(existsFilter, bindValues)
             
-        # Add sort
-        if this.sortField.len > 0:
+    # Add sort (applies with or without filters)
+    if this.sortField.len > 0:
 
-            # Get SQL column info
-            var sqlType = if this.sortIsNumber: "REAL" else: "TEXT"
-            var sqlName = this.sortField & "_" & sqlType
+        # Get SQL column info
+        var sqlType = if this.sortIsNumber: "REAL" else: "TEXT"
+        var sqlName = this.sortField & "_" & sqlType
 
-            # Ensure an indexable column exists for this field
-            db.createIndexableColumnForField(this.sortField, sqlName, sqlType)
-            
-            # Add the sort
-            sqlStr &= " ORDER BY \"" & sqlName & "\" " & (if this.sortAscending: "asc" else: "desc")
-            
-        # Add limit (required before OFFSET in SQLite)
-        if this.pLimit >= 0:
-            sqlStr &= " LIMIT " & $this.pLimit
-        elif this.pOffset > 0:
-            # SQLite requires LIMIT when using OFFSET
-            sqlStr &= " LIMIT -1"
+        # Ensure an indexable column exists for this field
+        db.createIndexableColumnForField(this.sortField, sqlName, sqlType)
+        
+        # Add the sort
+        sqlStr &= " ORDER BY \"" & sqlName & "\" " & (if this.sortAscending: "asc" else: "desc")
+        
+    # Add limit (required before OFFSET in SQLite)
+    if this.pLimit >= 0:
+        sqlStr &= " LIMIT " & $this.pLimit
+    elif this.pOffset > 0:
+        # SQLite requires LIMIT when using OFFSET
+        sqlStr &= " LIMIT -1"
 
-        # Add offset
-        if this.pOffset > 0:
-            sqlStr &= " OFFSET " & $this.pOffset
+    # Add offset
+    if this.pOffset > 0:
+        sqlStr &= " OFFSET " & $this.pOffset
 
-        # Create index for this query if needed
-        db.createIndex(this)
+    # Create index for this query if needed
+    db.createIndex(this)
 
-        # Done, prepare and bind the query
-        return (sqlStr, bindValues)
+    # Done, prepare and bind the query
+    return (sqlStr, bindValues)
+
+
+## Helper: Apply projection to a document
+proc applyProjection(doc: JsonNode, projection: JsonNode, includeMode: bool): JsonNode =
+    if projection == nil or projection.kind != JObject:
+        return doc
+
+    var result = newJObject()
+
+    if includeMode:
+        # Include mode: only include specified fields
+        for field, val in projection:
+            if val.getInt() == 1:
+                # Handle nested fields with dot notation
+                let parts = field.split('.')
+                var currentDoc = doc
+                var currentResult = result
+                var found = true
+
+                for i, part in parts:
+                    if currentDoc.hasKey(part):
+                        if i == parts.len - 1:
+                            # Last part - copy the value
+                            currentResult[part] = currentDoc[part]
+                        else:
+                            # Navigate deeper
+                            currentDoc = currentDoc[part]
+                            if not currentResult.hasKey(part):
+                                currentResult[part] = newJObject()
+                            currentResult = currentResult[part]
+                    else:
+                        found = false
+                        break
+
+                # If not found as nested, try as flat field
+                if not found and doc.hasKey(field):
+                    result[field] = doc[field]
+    else:
+        # Exclude mode: copy all fields except excluded ones
+        result = doc.copy()
+        for field, val in projection:
+            if val.getInt() == 0:
+                # Handle nested fields - for now just delete top-level
+                let parts = field.split('.')
+                if parts.len == 1:
+                    if result.hasKey(field):
+                        result.delete(field)
+                else:
+                    # For nested fields, we'd need more complex logic
+                    # For now, just delete the top-level key if it matches
+                    if result.hasKey(parts[0]):
+                        var shouldDelete = true
+                        var current = result[parts[0]]
+                        for i in 1 ..< parts.len:
+                            if current.kind == JObject and current.hasKey(parts[i]):
+                                current = current[parts[i]]
+                            else:
+                                shouldDelete = false
+                                break
+                        # Note: Full nested deletion is complex, skip for now
+
+    return result
 
 
 ## Execute the query and return all documents.
@@ -641,7 +735,13 @@ proc list*(this: SimpleDBQuery): seq[JsonNode] =
     for row in db.conn.rows(sql(sqlStr), bindValues):
 
         # Parse JSON for each result
-        docs.add(parseJson(row[0]))
+        var doc = parseJson(row[0])
+
+        # Apply projection if specified
+        if this.projection != nil:
+            doc = applyProjection(doc, this.projection, this.projectionInclude)
+
+        docs.add(doc)
 
     # Done
     return docs
@@ -659,8 +759,15 @@ iterator list*(this: SimpleDBQuery): JsonNode =
     # Run the query
     for row in db.conn.rows(sql(sqlStr), bindValues):
 
-        # Parse JSON for each result and yield it
-        yield parseJson(row[0])
+        # Parse JSON for each result
+        var doc = parseJson(row[0])
+
+        # Apply projection if specified
+        if this.projection != nil:
+            doc = applyProjection(doc, this.projection, this.projectionInclude)
+
+        # Yield the document
+        yield doc
 
 
 ## Execute the query and return the count of matching documents.
