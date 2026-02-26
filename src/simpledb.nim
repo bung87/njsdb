@@ -21,13 +21,27 @@ proc toJsonPath(field: string): string =
 
 
 ##
-## Query filter info
+## Query filter types
+type FilterOp = enum
+    foEq, foNe, foGt, foGte, foLt, foLte, foIn
+
+type LogicalOp = enum
+    loAnd, loOr
+
+##
+## Query filter info for a single condition
 class SimpleDBFilter:
     var field = ""
     var operation = ""
     var value = ""
     var values: seq[string] = @[]  # For IN operations
     var fieldIsNumber = false
+
+##
+## Logical filter group for $and/$or operations
+class SimpleDBLogicalFilter:
+    var op: LogicalOp
+    var filters: seq[SimpleDBFilter]
 
 
 ##
@@ -39,6 +53,9 @@ class SimpleDBQuery:
 
     ## List of filters
     var filters : seq[SimpleDBFilter]
+
+    ## List of logical filter groups ($and, $or)
+    var logicalFilters: seq[SimpleDBLogicalFilter]
 
     ## Sort field
     var sortField = ""
@@ -95,8 +112,8 @@ class SimpleDBQuery:
                 of JBool: return $node.getBool()
                 else: return $node
 
-        # Process each field in the filter
-        for field, val in filterObj:
+        # Helper to process a single field condition and return a filter
+        proc processCondition(field: string, val: JsonNode): SimpleDBFilter =
             if val.kind == JObject:
                 # Check for MongoDB-style operators like $in
                 if "$in" in val:
@@ -105,56 +122,80 @@ class SimpleDBQuery:
                         var values: seq[string] = @[]
                         for v in inValues:
                             values.add(jsonToString(v))
-                        let filter = SimpleDBFilter(field: field, operation: "IN", values: values, fieldIsNumber: false)
-                        this.filters.add(filter)
+                        return SimpleDBFilter(field: field, operation: "IN", values: values, fieldIsNumber: false)
                 elif "$eq" in val:
-                    # $eq operator - equality
                     let eqVal = val["$eq"]
                     let isNum = eqVal.kind == JInt or eqVal.kind == JFloat
-                    let filter = SimpleDBFilter(field: field, operation: "==", value: jsonToString(eqVal), fieldIsNumber: isNum)
-                    this.filters.add(filter)
+                    return SimpleDBFilter(field: field, operation: "==", value: jsonToString(eqVal), fieldIsNumber: isNum)
                 elif "$ne" in val:
-                    # $ne operator - not equal
                     let neVal = val["$ne"]
                     let isNum = neVal.kind == JInt or neVal.kind == JFloat
-                    let filter = SimpleDBFilter(field: field, operation: "!=", value: jsonToString(neVal), fieldIsNumber: isNum)
-                    this.filters.add(filter)
+                    return SimpleDBFilter(field: field, operation: "!=", value: jsonToString(neVal), fieldIsNumber: isNum)
                 elif "$gt" in val:
-                    # $gt operator - greater than
                     let gtVal = val["$gt"]
                     let isNum = gtVal.kind == JInt or gtVal.kind == JFloat
-                    let filter = SimpleDBFilter(field: field, operation: ">", value: jsonToString(gtVal), fieldIsNumber: isNum)
-                    this.filters.add(filter)
+                    return SimpleDBFilter(field: field, operation: ">", value: jsonToString(gtVal), fieldIsNumber: isNum)
                 elif "$gte" in val:
-                    # $gte operator - greater than or equal
                     let gteVal = val["$gte"]
                     let isNum = gteVal.kind == JInt or gteVal.kind == JFloat
-                    let filter = SimpleDBFilter(field: field, operation: ">=", value: jsonToString(gteVal), fieldIsNumber: isNum)
-                    this.filters.add(filter)
+                    return SimpleDBFilter(field: field, operation: ">=", value: jsonToString(gteVal), fieldIsNumber: isNum)
                 elif "$lt" in val:
-                    # $lt operator - less than
                     let ltVal = val["$lt"]
                     let isNum = ltVal.kind == JInt or ltVal.kind == JFloat
-                    let filter = SimpleDBFilter(field: field, operation: "<", value: jsonToString(ltVal), fieldIsNumber: isNum)
-                    this.filters.add(filter)
+                    return SimpleDBFilter(field: field, operation: "<", value: jsonToString(ltVal), fieldIsNumber: isNum)
                 elif "$lte" in val:
-                    # $lte operator - less than or equal
                     let lteVal = val["$lte"]
                     let isNum = lteVal.kind == JInt or lteVal.kind == JFloat
-                    let filter = SimpleDBFilter(field: field, operation: "<=", value: jsonToString(lteVal), fieldIsNumber: isNum)
-                    this.filters.add(filter)
+                    return SimpleDBFilter(field: field, operation: "<=", value: jsonToString(lteVal), fieldIsNumber: isNum)
             elif val.kind == JString:
-                # Simple string equality
-                let filter = SimpleDBFilter(field: field, operation: "==", value: val.getStr(), fieldIsNumber: false)
-                this.filters.add(filter)
+                return SimpleDBFilter(field: field, operation: "==", value: val.getStr(), fieldIsNumber: false)
             elif val.kind == JInt or val.kind == JFloat:
-                # Numeric equality
-                let filter = SimpleDBFilter(field: field, operation: "==", value: $val, fieldIsNumber: true)
-                this.filters.add(filter)
+                return SimpleDBFilter(field: field, operation: "==", value: $val, fieldIsNumber: true)
             elif val.kind == JBool:
-                # Boolean equality
-                let filter = SimpleDBFilter(field: field, operation: "==", value: $val.getBool(), fieldIsNumber: false)
-                this.filters.add(filter)
+                return SimpleDBFilter(field: field, operation: "==", value: $val.getBool(), fieldIsNumber: false)
+            
+            return SimpleDBFilter()
+
+        # Check for $or operator
+        if "$or" in filterObj:
+            let orArray = filterObj["$or"]
+            if orArray.kind == JArray:
+                var orFilters: seq[SimpleDBFilter] = @[]
+                for item in orArray:
+                    if item.kind == JObject and item.len > 0:
+                        # Get the first (and typically only) field from the object
+                        for field, val in item:
+                            let f = processCondition(field, val)
+                            if f.field.len > 0:
+                                orFilters.add(f)
+                            break
+                if orFilters.len > 0:
+                    let logicalFilter = SimpleDBLogicalFilter(op: loOr, filters: orFilters)
+                    this.logicalFilters.add(logicalFilter)
+
+        # Check for $and operator
+        if "$and" in filterObj:
+            let andArray = filterObj["$and"]
+            if andArray.kind == JArray:
+                var andFilters: seq[SimpleDBFilter] = @[]
+                for item in andArray:
+                    if item.kind == JObject and item.len > 0:
+                        for field, val in item:
+                            let f = processCondition(field, val)
+                            if f.field.len > 0:
+                                andFilters.add(f)
+                            break
+                if andFilters.len > 0:
+                    let logicalFilter = SimpleDBLogicalFilter(op: loAnd, filters: andFilters)
+                    this.logicalFilters.add(logicalFilter)
+
+        # Process regular field conditions (not $or/$and)
+        for field, val in filterObj:
+            if field == "$or" or field == "$and":
+                continue
+            let f = processCondition(field, val)
+            if f.field.len > 0:
+                this.filters.add(f)
         
         return this
     
@@ -380,6 +421,27 @@ class SimpleDB:
 
 
 
+## Helper: Build SQL condition for a single filter
+proc buildFilterSql(filter: SimpleDBFilter, bindValues: var seq[string]): string =
+    if filter.operation == "IN":
+        # Handle IN operation with multiple values
+        result &= "json_extract(_json, ?) IN ("
+        bindValues.add(filter.field.toJsonPath())
+        for i in 0 ..< filter.values.len:
+            if i > 0: result &= ", "
+            result &= "?"
+            bindValues.add(filter.values[i])
+        result &= ")"
+    else:
+        # For numeric comparisons, cast json_extract result to REAL
+        if filter.fieldIsNumber:
+            result &= "CAST(json_extract(_json, ?) AS REAL) " & filter.operation & " CAST(? AS REAL)"
+        else:
+            result &= "json_extract(_json, ?) " & filter.operation & " ?"
+        bindValues.add(filter.field.toJsonPath())
+        bindValues.add(filter.value)
+
+
 ## Execute the query and return all documents.
 proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[string]) =
 
@@ -390,36 +452,38 @@ proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[strin
     var bindValues : seq[string]
     var sqlStr = sqlPrefix
 
+    # Check if we have any filters
+    let hasFilters = this.filters.len > 0 or this.logicalFilters.len > 0
+
     # Add filters
-    if this.filters.len > 0:
+    if hasFilters:
 
         # Add WHERE clause
         sqlStr &= " WHERE "
         var addedFirst = false
-        for filter in this.filters:
 
+        # Add regular filters (implicit AND)
+        for filter in this.filters:
             # Add the 'AND' if this is not the first filter
             if addedFirst: sqlStr &= " AND "
             addedFirst = true
 
-            # Add the filter using json_extract to query within the JSON field
-            if filter.operation == "IN":
-                # Handle IN operation with multiple values
-                sqlStr &= "json_extract(_json, ?) IN ("
-                bindValues.add(filter.field.toJsonPath())
-                for i in 0 ..< filter.values.len:
-                    if i > 0: sqlStr &= ", "
-                    sqlStr &= "?"
-                    bindValues.add(filter.values[i])
-                sqlStr &= ")"
-            else:
-                # For numeric comparisons, cast json_extract result to REAL
-                if filter.fieldIsNumber:
-                    sqlStr &= "CAST(json_extract(_json, ?) AS REAL) " & filter.operation & " CAST(? AS REAL)"
-                else:
-                    sqlStr &= "json_extract(_json, ?) " & filter.operation & " ?"
-                bindValues.add(filter.field.toJsonPath())
-                bindValues.add(filter.value)
+            # Add the filter
+            sqlStr &= buildFilterSql(filter, bindValues)
+
+        # Add logical filters ($or, $and)
+        for logicalFilter in this.logicalFilters:
+            if addedFirst: sqlStr &= " AND "
+            addedFirst = true
+
+            let logicalOp = if logicalFilter.op == loOr: " OR " else: " AND "
+            sqlStr &= "("
+            var firstInGroup = true
+            for filter in logicalFilter.filters:
+                if not firstInGroup: sqlStr &= logicalOp
+                firstInGroup = false
+                sqlStr &= buildFilterSql(filter, bindValues)
+            sqlStr &= ")"
             
         # Add sort
         if this.sortField.len > 0:

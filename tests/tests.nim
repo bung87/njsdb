@@ -513,3 +513,92 @@ suite "SimpleDB Nested Field Queries (Dot Notation)":
     let docs = db.query().filter(filter).list()
     check docs.len == 1
     check docs[0]["id"].getStr == "user-2"
+
+
+suite "SimpleDB Logical Operators ($or, $and)":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB.init(":memory:")
+    # Seed test data
+    db.put(%*{ "id": "doc-1", "type": "A", "status": "active", "priority": 1 })
+    db.put(%*{ "id": "doc-2", "type": "A", "status": "inactive", "priority": 2 })
+    db.put(%*{ "id": "doc-3", "type": "B", "status": "active", "priority": 3 })
+    db.put(%*{ "id": "doc-4", "type": "B", "status": "inactive", "priority": 4 })
+    db.put(%*{ "id": "doc-5", "type": "C", "status": "pending", "priority": 5 })
+
+  teardown:
+    db.close()
+
+  test "Filter with $or operator":
+    let filter = %*{
+      "$or": [
+        { "type": "A" },
+        { "type": "B" }
+      ]
+    }
+    let docs = db.query().filter(filter).list()
+    check docs.len == 4
+
+  test "Filter with $or operator - multiple conditions":
+    let filter = %*{
+      "$or": [
+        { "status": "active" },
+        { "priority": { "$gte": 4 } }
+      ]
+    }
+    let docs = db.query().filter(filter).list()
+    # active: doc-1, doc-3 (2 docs)
+    # priority >= 4: doc-4, doc-5 (2 docs)
+    # Total unique: 4
+    check docs.len == 4
+
+  test "Filter with $and operator":
+    let filter = %*{
+      "$and": [
+        { "type": "A" },
+        { "status": "active" }
+      ]
+    }
+    let docs = db.query().filter(filter).list()
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-1"
+
+  test "Filter with $and operator - multiple conditions":
+    let filter = %*{
+      "$and": [
+        { "type": "B" },
+        { "status": "inactive" },
+        { "priority": { "$gte": 3 } }
+      ]
+    }
+    let docs = db.query().filter(filter).list()
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-4"
+
+  test "Filter with $or combined with regular filter":
+    let filter = %*{
+      "status": "active",
+      "$or": [
+        { "type": "A" },
+        { "type": "B" }
+      ]
+    }
+    let docs = db.query().filter(filter).list()
+    # status=active AND (type=A OR type=B)
+    # doc-1 (A, active), doc-3 (B, active)
+    check docs.len == 2
+
+  test "Filter with $and combined with regular filter":
+    let filter = %*{
+      "type": "A",
+      "$and": [
+        { "status": "inactive" },
+        { "priority": { "$gte": 1 } }
+      ]
+    }
+    let docs = db.query().filter(filter).list()
+    # type=A AND (status=inactive AND priority>=1)
+    # doc-2 (A, inactive, priority=2)
+    check docs.len == 1
+    check docs[0]["id"].getStr == "doc-2"
