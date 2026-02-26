@@ -11,6 +11,10 @@
 | **Comparison Operators** | `==`, `!=`, `<`, `<=`, `>`, `>=` | Both method and filter styles |
 | **MongoDB-style Filter** | `.filter(JsonNode)` | JSON-based query syntax |
 | **Filter Operators** | `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in` | Via filter() method |
+| **Nested Field Queries** | `where("user.name", "==", "John")` | Dot notation support |
+| **Logical Operators** | `$or`, `$and` | Complex conditional queries |
+| **Array Operators** | `$all`, `$size` | Array field queries |
+| **Existence Check** | `$exists` | Field presence/absence |
 | **Merge Updates** | `put(doc, merge = true)` | Partial document updates |
 | **Batch Operations** | `.batch()` | Transaction wrapper |
 | **Count** | `.count()` | Document counting |
@@ -27,27 +31,23 @@
 
 ### 🔥 High Priority
 
-#### 1. Nested Field Queries (Dot Notation)
+#### 1. Nested Field Queries (Dot Notation) ✅
 Query nested JSON fields using dot notation like MongoDB.
 
 ```nim
-# Current limitation: Cannot query nested fields easily
-# Proposed:
 db.query().where("user.name", "==", "John")
 db.query().filter(%*{ "address.zipcode": "10001" })
 ```
 
-**Implementation Notes:**
+**Implementation:**
 - SQLite's `json_extract(_json, '$.user.name')` supports this
-- Convert dot notation to JSON path in query builder
+- `toJsonPath()` helper converts dot notation to JSON path
 - Affects: `where()`, `filter()`, `sort()`, `distinctValues()`
 
-#### 2. Logical Operators (`$or`, `$nor`, `$not`)
+#### 2. Logical Operators (`$or`, `$and`) ✅
 Complex conditional queries beyond implicit AND.
 
 ```nim
-# Current: Only implicit AND via chained .where()
-# Proposed:
 db.query().filter(%*{
   "$or": [
     { "status": "active" },
@@ -57,22 +57,20 @@ db.query().filter(%*{
 
 # Mixed AND/OR
 db.query().filter(%*{
-  "$and": [
-    { "type": "user" },
-    { "$or": [
-      { "status": "active" },
-      { "status": "pending" }
-    ]}
+  "status": "active",
+  "$or": [
+    { "type": "A" },
+    { "type": "B" }
   ]
 })
 ```
 
-**Implementation Notes:**
-- Requires SQL OR operator support in query builder
-- Need to handle nested logical operators
-- Consider query optimization (flatten nested ANDs)
+**Implementation:**
+- `SimpleDBLogicalFilter` class for logical operator groups
+- `buildFilterSql()` helper for SQL generation
+- Proper parentheses grouping in SQL
 
-#### 3. Array Operators
+#### 3. Array Operators (`$all`, `$size`) ✅
 Query documents based on array field contents.
 
 ```nim
@@ -81,45 +79,36 @@ db.query().filter(%*{
   "tags": { "$all": ["important", "urgent"] }
 })
 
-# $elemMatch - Array element matches criteria
-db.query().filter(%*{
-  "comments": {
-    "$elemMatch": {
-      "author": "John",
-      "rating": { "$gte": 4 }
-    }
-  }
-})
-
 # $size - Array has specific length
 db.query().filter(%*{
   "tags": { "$size": 3 }
 })
 ```
 
-**Implementation Notes:**
-- `$all`: Use `json_each` table-valued function or multiple `json_array_contains`
-- `$elemMatch`: Complex - may need subquery or custom function
-- `$size`: `json_array_length(json_extract(_json, '$.field'))`
+**Implementation:**
+- `$all`: Uses `json_each` table-valued function with EXISTS
+- `$size`: Uses `json_array_length()` with CAST for proper comparison
+- `SimpleDBArrayFilter` class for array operations
 
-#### 4. Existence Check (`$exists`)
+#### 4. Existence Check (`$exists`) ✅
 Query for field presence or absence.
 
 ```nim
-# Field exists
+# Field has non-null value
+db.query().filter(%*{
+  "archived": { "$exists": true }
+})
+
+# Field missing or null
 db.query().filter(%*{
   "deletedAt": { "$exists": false }
 })
-
-# Field does not exist
-db.query().filter(%*{
-  "archived": { "$exists": false }
-})
 ```
 
-**Implementation Notes:**
-- SQLite: `json_type(json_extract(_json, '$.field')) IS NOT NULL`
-- Need to distinguish between null and undefined
+**Implementation:**
+- Uses `json_extract(_json, '$.field') IS NOT NULL`
+- Note: SQLite returns NULL for both non-existent fields AND null values
+- `SimpleDBExistsFilter` class for exists operations
 
 #### 5. Projection (Field Selection)
 Return only specific fields instead of full documents.
