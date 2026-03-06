@@ -409,6 +409,9 @@ class SimpleDB:
     ## (private) List of hashes of generated indexes
     var createdIndexHashes: seq[string]
 
+    ## (private) Current collection/table name (empty until collection() is called)
+    var currentCollection: string = ""
+
     ## Open a database connection
     ##
     ## Parameters:
@@ -434,6 +437,34 @@ class SimpleDB:
             this.conn = nil
 
 
+    ## Select a collection (table) to work with
+    ##
+    ## Parameters:
+    ##   name: The name of the collection/table
+    ##
+    ## Returns:
+    ##   The SimpleDB instance for method chaining
+    ##
+    ## Example:
+    ##   db.collection("users").put(%*{ "id": "user1", "name": "Alice" })
+    ##   db.collection("orders").put(%*{ "id": "order1", "total": 100 })
+    method collection(name: string): SimpleDB {.gcsafe.} =
+
+        # Update current collection
+        this.currentCollection = name
+
+        # Reset prepared flag since we're switching to a different table
+        this.hasPrepared = false
+        this.extraColumns = @["id_TEXT"]
+        this.createdIndexHashes = @[]
+
+        # Prepare the new collection
+        this.prepareDB()
+
+        # Return self for chaining
+        return this
+
+
     ## (private) Prepare the datatabase for use
     method prepareDB() {.gcsafe.} =
 
@@ -441,11 +472,17 @@ class SimpleDB:
         if this.hasPrepared: return
         this.hasPrepared = true
 
-        # Create main table if it doesn't exist
-        this.conn.exec(sql"CREATE TABLE IF NOT EXISTS documents (id_TEXT TEXT PRIMARY KEY, _json TEXT)")
+        # Check if collection has been selected
+        if this.currentCollection.len == 0:
+            raise newException(SimpleDBError, "No collection selected. Call collection(name) first.")
+
+        # Create collection table if it doesn't exist
+        let createTableSql = "CREATE TABLE IF NOT EXISTS " & this.currentCollection & " (id_TEXT TEXT PRIMARY KEY, _json TEXT)"
+        this.conn.exec(sql createTableSql)
 
         # Get list of all columns in the table
-        for row in this.conn.rows(sql"PRAGMA table_info(documents)"):
+        let pragmaSql = "PRAGMA table_info(" & this.currentCollection & ")"
+        for row in this.conn.rows(sql pragmaSql):
 
             # Add to the extra columns array
             let columnName = row[1]
@@ -508,12 +545,13 @@ class SimpleDB:
         this.batch do():
 
             # Create new field on the table
-            let str = "ALTER TABLE documents ADD \"" & sqlName & "\" " & sqlType
+            let str = "ALTER TABLE " & this.currentCollection & " ADD \"" & sqlName & "\" " & sqlType
             this.conn.exec(sql(str))
 
             # Fetch all existing documents ... this is heavy, but we can't iterate and modify at the same time
-            let sqlUpdateRow = sql("UPDATE documents SET \"" & sqlName & "\" = ? WHERE id_TEXT = ?")
-            for row in this.conn.getAllRows(sql"SELECT id_TEXT, _json FROM documents"):
+            let sqlUpdateRow = sql("UPDATE " & this.currentCollection & " SET \"" & sqlName & "\" = ? WHERE id_TEXT = ?")
+            let selectSql = "SELECT id_TEXT, _json FROM " & this.currentCollection
+            for row in this.conn.getAllRows(sql(selectSql)):
 
                 # Parse this document
                 let id = row[0]
@@ -548,7 +586,7 @@ class SimpleDB:
             return
         
         # Create SQL
-        var sqlStr = "CREATE INDEX IF NOT EXISTS \"documents_" & indexHash & "\" ON documents ("
+        var sqlStr = "CREATE INDEX IF NOT EXISTS \"" & this.currentCollection & "_" & indexHash & "\" ON " & this.currentCollection & " ("
 
         # Add filter fields
         var addedFirst = false
@@ -918,18 +956,18 @@ proc hasNestedFields(this: SimpleDBQuery): bool =
 
 
 ## Helper: Build SQL SELECT clause for projection
-proc buildProjectionSql(this: SimpleDBQuery): string =
+proc buildProjectionSql(this: SimpleDBQuery, collection: string): string =
     ## Builds SQL SELECT clause using json_extract for include projections
     ## Returns "SELECT _json" if no projection, exclude mode, or nested fields
     ## Returns "SELECT json_object(...)" for flat include mode projections
     
     if this.projection == nil or not this.projectionInclude:
         # No projection or exclude mode - fetch full document
-        return "SELECT _json FROM documents"
+        return "SELECT _json FROM " & collection
     
     # For nested fields, fall back to in-memory projection
     if this.hasNestedFields():
-        return "SELECT _json FROM documents"
+        return "SELECT _json FROM " & collection
     
     # Include mode with only flat fields - build json_object
     var extracts: seq[string] = @[]
@@ -941,9 +979,9 @@ proc buildProjectionSql(this: SimpleDBQuery): string =
     
     if extracts.len == 0:
         # No valid fields to include
-        return "SELECT _json FROM documents"
+        return "SELECT _json FROM " & collection
     
-    return "SELECT json_object(" & extracts.join(", ") & ") FROM documents"
+    return "SELECT json_object(" & extracts.join(", ") & ") FROM " & collection
 
 
 ## Execute the query and return all documents.
@@ -956,7 +994,7 @@ proc list*(this: SimpleDBQuery): seq[JsonNode] =
     let db = cast[ptr SimpleDB](this.db)[]
     
     # Build SELECT clause based on projection
-    let selectPrefix = this.buildProjectionSql()
+    let selectPrefix = this.buildProjectionSql(db.currentCollection)
     let (sqlStr, bindValues) = prepareQuerySql(this, selectPrefix)
 
     for row in db.conn.rows(sql(sqlStr), bindValues):
@@ -976,7 +1014,7 @@ iterator list*(this: SimpleDBQuery): JsonNode =
     let db = cast[ptr SimpleDB](this.db)[]
 
     # Build SELECT clause based on projection
-    let selectPrefix = this.buildProjectionSql()
+    let selectPrefix = this.buildProjectionSql(db.currentCollection)
     let (sqlStr, bindValues) = prepareQuerySql(this, selectPrefix)
 
     # Run the query
@@ -1003,7 +1041,8 @@ proc explain*(this: SimpleDBQuery): seq[JsonNode] =
     let db = cast[ptr SimpleDB](this.db)[]
 
     # Prepare the query SQL (but we don't need bind values for EXPLAIN)
-    let (sqlStr, bindValues) = prepareQuerySql(this, "SELECT _json FROM documents")
+    let selectPrefix = "SELECT _json FROM " & db.currentCollection
+    let (sqlStr, bindValues) = prepareQuerySql(this, selectPrefix)
 
     # Build EXPLAIN QUERY PLAN SQL
     let explainSql = "EXPLAIN QUERY PLAN " & sqlStr
@@ -1027,7 +1066,8 @@ proc count*(this: SimpleDBQuery): int {.discardable.} =
     let db = cast[ptr SimpleDB](this.db)[]
 
     # Prepare the query
-    let (sqlStr, bindValues) = prepareQuerySql(this, "SELECT COUNT(*) FROM documents")
+    let countPrefix = "SELECT COUNT(*) FROM " & db.currentCollection
+    let (sqlStr, bindValues) = prepareQuerySql(this, countPrefix)
 
     # Run the query and get the count
     let countStr = db.conn.getValue(sql(sqlStr), bindValues)
@@ -1048,7 +1088,7 @@ proc distinctValues*(this: SimpleDBQuery, field: string): seq[string] {.gcsafe.}
     let (whereSql, bindValues) = prepareQuerySql(this, "")
     
     # Build the full SQL with DISTINCT and json_extract
-    var sqlStr = "SELECT DISTINCT json_extract(_json, '$.' || ?) FROM documents"
+    var sqlStr = "SELECT DISTINCT json_extract(_json, '$.' || ?) FROM " & db.currentCollection
     var allBindValues = @[field]
     
     # Add WHERE clause if there are filters
@@ -1070,7 +1110,8 @@ proc remove*(this: SimpleDBQuery): int {.discardable.} =
     let db = cast[ptr SimpleDB](this.db)[]
 
     # Prepare the query
-    let (sqlStr, bindValues) = prepareQuerySql(this, "DELETE FROM documents")
+    let deletePrefix = "DELETE FROM " & db.currentCollection
+    let (sqlStr, bindValues) = prepareQuerySql(this, deletePrefix)
 
     # Run the query
     return int db.conn.execAffectedRows(sql(sqlStr), bindValues)
@@ -1248,7 +1289,7 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
         bindValues.add(renameOp.oldPath)
 
     # Build the full SQL
-    var sqlStr = "UPDATE documents SET _json = " & sqlExpr
+    var sqlStr = "UPDATE " & db.currentCollection & " SET _json = " & sqlExpr
     
     # Add WHERE clause using json_extract
     if this.filters.len > 0:
@@ -1276,8 +1317,8 @@ proc aggregateCount*(this: SimpleDB, collection: string, groupField: string, mat
     # Prepare database
     this.prepareDB()
     
-    # Build base query with collection filter
-    var query = this.query().where("_collection", "==", collection)
+    # Build base query
+    var query = this.query()
     
     # Apply additional filters if provided
     if matchFilter != nil and matchFilter.len > 0:
@@ -1287,7 +1328,7 @@ proc aggregateCount*(this: SimpleDB, collection: string, groupField: string, mat
     let (whereSql, bindValues) = prepareQuerySql(query, "")
     
     # Build aggregate SQL using json_extract for GROUP BY
-    var sqlStr = "SELECT json_extract(_json, '$.' || ?), COUNT(*) FROM documents"
+    var sqlStr = "SELECT json_extract(_json, '$.' || ?), COUNT(*) FROM " & this.currentCollection
     var allBindValues = @[groupField]
     
     # Add WHERE clause if there are filters
@@ -1382,7 +1423,7 @@ proc aggregate*(this: SimpleDB, groupField: string, aggregations: JsonNode, matc
             allBindValues.add(maxField)
     
     # Build full SQL
-    var sqlStr = "SELECT " & selectFields.join(", ") & " FROM documents"
+    var sqlStr = "SELECT " & selectFields.join(", ") & " FROM " & this.currentCollection
     
     # Add WHERE clause if there are filters
     if whereSql.len > 0:
@@ -1447,7 +1488,7 @@ proc writeDocument(this: SimpleDB, document: JsonNode) =
     this.prepareDB()
 
     # Create query including all fields
-    let str = "INSERT OR REPLACE INTO documents (_json, " & this.extraColumns.join(", ") & ") VALUES (?, " & this.extraColumns.mapIt("?").join(", ") & ")"
+    let str = "INSERT OR REPLACE INTO " & this.currentCollection & " (_json, " & this.extraColumns.join(", ") & ") VALUES (?, " & this.extraColumns.mapIt("?").join(", ") & ")"
     let cmd = sql(str)
 
     # First field is the JSON content

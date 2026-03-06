@@ -15,6 +15,9 @@ import json
 var db = SimpleDB()
 db.open("database.db")
 
+# Select a collection (table) to work with
+db.collection("documents")
+
 # Write a document
 db.put(%* {
     "id": "1234",
@@ -64,6 +67,56 @@ db.batch do():
 
 # Close the database
 db.close()
+```
+
+## Collections
+
+SimpleDB supports multiple collections (tables) in the same database. Each collection is stored in a separate SQLite table, providing data isolation and avoiding table-level lock contention.
+
+### Selecting a Collection
+
+```nim
+# You must select a collection before any operations
+db.collection("users")
+db.put(%* { "id": "u1", "name": "Alice" })
+
+# Switch to another collection
+db.collection("orders")
+db.put(%* { "id": "o1", "total": 100 })
+
+# Method chaining is supported
+db.collection("products")
+   .query()
+   .where("price", ">", 50)
+   .list()
+```
+
+### Collection Isolation
+
+```nim
+# Data is isolated between collections
+db.collection("active_users")
+db.put(%* { "id": "user1", "status": "active" })
+
+db.collection("archived_users")
+db.put(%* { "id": "user1", "status": "archived" })
+
+# Query only returns documents from the current collection
+let active = db.collection("active_users").get("user1")
+echo active["status"].getStr  # "active"
+
+let archived = db.collection("archived_users").get("user1")
+echo archived["status"].getStr  # "archived"
+```
+
+### Important Note
+
+You **must** call `collection()` before any database operation. If you don't, a `SimpleDBError` will be raised:
+
+```nim
+db.open("database.db")
+# Missing: db.collection("...")
+db.put(%* { "id": "test" })  # Raises SimpleDBError: No collection selected
 ```
 
 ## Query Operators

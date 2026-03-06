@@ -8,6 +8,8 @@ suite "SimpleDB":
         # Create it
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Check we can put and get
         db.put(%*{"id": "test", "value": 123})
@@ -22,6 +24,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create a document
         var doc = %*{ "id": "doc1", "name": "Test Document", "value": 42 }
@@ -44,6 +48,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create some documents
         for i in 1..10:
@@ -68,6 +74,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create a document
         var doc = %*{ "id": "doc1", "name": "Original Name", "value": 42 }
@@ -92,6 +100,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create a document
         var doc = %*{ "id": "doc1", "name": "Test Document" }
@@ -117,6 +127,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create some documents
         for i in 1..10:
@@ -144,6 +156,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create some documents
         for i in 1..5:
@@ -171,6 +185,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create some documents
         for i in 1..10:
@@ -205,6 +221,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create some documents
         for i in 1..10:
@@ -231,6 +249,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create some documents
         for i in 1..10:
@@ -265,6 +285,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create some documents
         for i in 1..10:
@@ -289,6 +311,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create some documents with boolean field
         for i in 1..10:
@@ -321,6 +345,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create a document
         var doc = %*{
@@ -353,6 +379,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create a document
         var doc = %*{
@@ -390,6 +418,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Insert multiple documents
         for i in 1..5:
@@ -410,6 +440,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create document without ID
         var doc = %*{
@@ -437,6 +469,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create documents with categories
         for i in 1..10:
@@ -458,6 +492,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create documents with categories
         for i in 1..10:
@@ -479,6 +515,8 @@ suite "SimpleDB":
         # Create database
         var db = SimpleDB()
         db.open(":memory:")
+        discard db.collection("documents")
+
 
         # Create some documents
         for i in 1..5:
@@ -509,6 +547,8 @@ suite "SimpleDB Nested Field Queries":
   setup:
     db = SimpleDB()
     db.open(":memory:")
+    discard db.collection("documents")
+
     # Seed test data with nested objects
     db.put(%*{
       "id": "user-1",
@@ -603,6 +643,8 @@ suite "SimpleDB Logical Operators ($or, $and)":
   setup:
     db = SimpleDB()
     db.open(":memory:")
+    discard db.collection("documents")
+
     # Seed test data
     db.put(%*{
       "id": "doc-1",
@@ -713,6 +755,8 @@ suite "SimpleDB Array Operators ($all, $size)":
   setup:
     db = SimpleDB()
     db.open(":memory:")
+    discard db.collection("documents")
+
     # Seed test data with arrays
     db.put(%*{
       "id": "doc-1",
@@ -819,6 +863,8 @@ suite "SimpleDB $exists Operator":
   setup:
     db = SimpleDB()
     db.open(":memory:")
+    discard db.collection("documents")
+
     # Seed test data - some with optional fields
     # Note: SQLite json_extract returns NULL for both non-existent fields AND null values
     # So $exists: true matches fields with non-null values
@@ -910,6 +956,8 @@ suite "SimpleDB Projection":
   setup:
     db = SimpleDB()
     db.open(":memory:")
+    discard db.collection("documents")
+
     # Seed test data
     db.put(%*{
       "id": "doc-1",
@@ -1015,6 +1063,8 @@ suite "SimpleDB Extended Aggregation":
   setup:
     db = SimpleDB()
     db.open(":memory:")
+    discard db.collection("documents")
+
     # Seed test data - sales data
     db.put(%*{ "id": "sale-1", "category": "electronics", "amount": 100.0, "quantity": 2 })
     db.put(%*{ "id": "sale-2", "category": "electronics", "amount": 200.0, "quantity": 1 })
@@ -1094,6 +1144,8 @@ suite "SimpleDB Bulk Operations":
   setup:
     db = SimpleDB()
     db.open(":memory:")
+    discard db.collection("documents")
+
 
   teardown:
     db.close()
@@ -1164,3 +1216,91 @@ suite "SimpleDB Bulk Operations":
     let emptyIds: seq[string] = @[]
     let deleted = db.bulkDelete(emptyIds)
     check deleted == 0
+
+
+suite "SimpleDB Collections":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB()
+    db.open(":memory:")
+
+  teardown:
+    db.close()
+
+  test "Must call collection() before operations":
+    # Should raise error if collection() is not called
+    expect SimpleDBError:
+      db.put(%*{ "id": "doc1", "name": "Test" })
+
+  test "Switch between collections":
+    # Insert into users collection
+    db.collection("users").put(%*{ "id": "user1", "name": "Alice", "age": 30 })
+    db.collection("users").put(%*{ "id": "user2", "name": "Bob", "age": 25 })
+    
+    # Insert into orders collection
+    db.collection("orders").put(%*{ "id": "order1", "userId": "user1", "total": 100 })
+    db.collection("orders").put(%*{ "id": "order2", "userId": "user2", "total": 200 })
+    
+    # Verify users collection has 2 documents
+    check db.collection("users").query().count() == 2
+    
+    # Verify orders collection has 2 documents
+    check db.collection("orders").query().count() == 2
+    
+    # Verify data isolation - users collection should not have orders
+    check db.collection("users").get("order1") == nil
+    
+    # Verify data isolation - orders collection should not have users
+    check db.collection("orders").get("user1") == nil
+
+  test "Collection method chaining":
+    # Test that collection() returns SimpleDB for chaining
+    let result = db.collection("products")
+    result.put(%*{ "id": "prod1", "name": "Laptop", "price": 999 })
+    
+    # Query using chained collection
+    let products = db.collection("products").query().where("price", ">", 500).list()
+    check products.len == 1
+    check products[0]["name"].getStr == "Laptop"
+
+  test "Query across different collections":
+    # Add data to multiple collections
+    db.collection("category_a").put(%*{ "id": "a1", "value": 10 })
+    db.collection("category_a").put(%*{ "id": "a2", "value": 20 })
+    db.collection("category_b").put(%*{ "id": "b1", "value": 30 })
+    db.collection("category_b").put(%*{ "id": "b2", "value": 40 })
+    
+    # Query each collection separately
+    let countA = db.collection("category_a").query().count()
+    let countB = db.collection("category_b").query().count()
+    
+    check countA == 2
+    check countB == 2
+
+  test "Update in specific collection":
+    # Insert into collection
+    db.collection("inventory").put(%*{ "id": "item1", "stock": 100 })
+    
+    # Update in the same collection
+    let updated = db.collection("inventory").query().where("id", "==", "item1").update(%*{
+      "$set": { "stock": 95 }
+    })
+    check updated == 1
+    
+    # Verify update
+    let item = db.collection("inventory").get("item1")
+    check item["stock"].getInt == 95
+
+  test "Delete from specific collection":
+    # Insert into two collections
+    db.collection("active").put(%*{ "id": "doc1", "status": "active" })
+    db.collection("archived").put(%*{ "id": "doc1", "status": "archived" })
+    
+    # Delete from active collection only
+    let deleted = db.collection("active").removeOne("doc1")
+    check deleted == true
+    
+    # Verify doc1 is gone from active but still in archived
+    check db.collection("active").get("doc1") == nil
+    check db.collection("archived").get("doc1") != nil
