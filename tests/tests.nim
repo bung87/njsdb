@@ -273,6 +273,37 @@ suite "SimpleDB":
         # Clean up
         db.close()
 
+    test "Query with boolean filter":
+
+        # Create database
+        var db = SimpleDB.init(":memory:")
+
+        # Create some documents with boolean field
+        for i in 1..10:
+            var doc = %*{
+                "id": "doc" & $i,
+                "name": "Document " & $i,
+                "active": i <= 5  # First 5 are active=true
+            }
+            db.put(doc)
+
+        # Query with boolean true
+        var filter = %*{
+            "active": true
+        }
+        var results = db.query().filter(filter).list()
+        check results.len == 5
+
+        # Query with boolean false
+        filter = %*{
+            "active": false
+        }
+        results = db.query().filter(filter).list()
+        check results.len == 5
+
+        # Clean up
+        db.close()
+
     test "Update with $set":
 
         # Create database
@@ -300,6 +331,42 @@ suite "SimpleDB":
         check retrieved["name"].getStr == "Updated"
         check retrieved["value"].getInt == 200
         check retrieved["tags"].len == 2  # Should preserve existing fields
+
+        # Clean up
+        db.close()
+
+    test "Update with $set using complex array":
+
+        # Create database
+        var db = SimpleDB.init(":memory:")
+
+        # Create a document
+        var doc = %*{
+            "id": "doc1",
+            "name": "Original",
+            "options": []
+        }
+        db.put(doc)
+
+        # Update with complex array using $set
+        let matchedOptions = %*[
+            {"id": "opt1", "label": "Option 1", "selected": true},
+            {"id": "opt2", "label": "Option 2", "selected": false}
+        ]
+        
+        db.query().where("id", "==", "doc1").update(%*{
+            "$set": {
+                "options": matchedOptions,
+                "grade": true
+            }
+        })
+
+        # Get it back
+        var retrieved = db.get("doc1")
+        check retrieved["options"].len == 2
+        check retrieved["options"][0]["id"].getStr == "opt1"
+        check retrieved["options"][0]["selected"].getBool == true
+        check retrieved["grade"].getBool == true
 
         # Clean up
         db.close()

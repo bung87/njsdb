@@ -48,6 +48,7 @@ class SimpleDBFilter:
     var value = ""
     var values: seq[string] = @[]  # For IN operations
     var fieldIsNumber = false
+    var fieldIsBoolean = false  # For boolean comparisons
 
 ##
 ## Logical filter group for $and/$or operations
@@ -206,8 +207,10 @@ class SimpleDBQuery:
             elif val.kind == JInt or val.kind == JFloat:
                 return SimpleDBFilter(field: field, operation: "==", value: $val, fieldIsNumber: true)
             elif val.kind == JBool:
-                return SimpleDBFilter(field: field, operation: "==", value: $val.getBool(), fieldIsNumber: false)
-            
+                # SQLite stores booleans as integers (1/0)
+                let boolValue = if val.getBool(): "1" else: "0"
+                return SimpleDBFilter(field: field, operation: "==", value: boolValue, fieldIsNumber: true, fieldIsBoolean: true)
+
             return SimpleDBFilter()
 
         # Check for $or operator
@@ -593,6 +596,10 @@ proc buildFilterSql(filter: SimpleDBFilter, bindValues: var seq[string]): string
         # For numeric comparisons, cast json_extract result to REAL
         if filter.fieldIsNumber:
             result &= "CAST(json_extract(_json, ?) AS REAL) " & filter.operation & " CAST(? AS REAL)"
+        elif filter.fieldIsBoolean:
+            # For boolean comparisons, SQLite stores booleans as integers (1/0)
+            # Use numeric comparison
+            result &= "CAST(json_extract(_json, ?) AS INTEGER) " & filter.operation & " CAST(? AS INTEGER)"
         else:
             result &= "json_extract(_json, ?) " & filter.operation & " ?"
         bindValues.add(filter.field.toJsonPath())
@@ -1101,8 +1108,9 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
     # Get database reference
     let db = cast[ptr SimpleDB](this.db)[]
 
-    # Build json_set expression starting from _json
-    var jsonSetExpr = "_json"
+    # Collect all json_set operations and their bind parameters
+    var jsonSetPaths: seq[string] = @[]
+    var jsonSetValues: seq[string] = @[]
     
     # Process $set operator
     if "$set" in updates:
@@ -1114,11 +1122,9 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
             # Skip id field updates
             if key == "id": continue
             
-            # Build json_set expression
-            let jsonValue = if value.kind == JString: "\"" & value.getStr() & "\""
-                            else: $value
-            let jsonPath = "$." & key
-            jsonSetExpr = "json_set(" & jsonSetExpr & ", '" & jsonPath & "', " & jsonValue & ")"
+            # Collect path and value as bind parameters
+            jsonSetPaths.add("$." & key)
+            jsonSetValues.add($value)
     
     # Process $inc operator (increment)
     if "$inc" in updates:
@@ -1130,13 +1136,13 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
             # Skip id field updates
             if key == "id": continue
             
-            # Build json_set with COALESCE to handle non-existent fields (default to 0)
-            let incValue = if value.kind == JString: value.getStr()
-                           else: $value
+            # For $inc, we need to use json_extract in the expression
+            # We'll handle this separately after building the base json_set
             let jsonPath = "$." & key
-            let extractExpr = "COALESCE(json_extract(_json, '" & jsonPath & "'), 0)"
-            let calcExpr = extractExpr & " + " & incValue
-            jsonSetExpr = "json_set(" & jsonSetExpr & ", '" & jsonPath & "', " & calcExpr & ")"
+            let incValue = if value.kind == JString: value.getStr() else: $value
+            # Store as special marker for increment operation
+            jsonSetPaths.add(jsonPath & "||INC||" & incValue)
+            jsonSetValues.add("")  # Placeholder
     
     # Process $mul operator (multiply)
     if "$mul" in updates:
@@ -1148,15 +1154,14 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
             # Skip id field updates
             if key == "id": continue
             
-            # Build json_set with COALESCE to handle non-existent fields (default to 0)
-            let mulValue = if value.kind == JString: value.getStr()
-                           else: $value
             let jsonPath = "$." & key
-            let extractExpr = "COALESCE(json_extract(_json, '" & jsonPath & "'), 0)"
-            let calcExpr = extractExpr & " * " & mulValue
-            jsonSetExpr = "json_set(" & jsonSetExpr & ", '" & jsonPath & "', " & calcExpr & ")"
+            let mulValue = if value.kind == JString: value.getStr() else: $value
+            # Store as special marker for multiply operation
+            jsonSetPaths.add(jsonPath & "||MUL||" & mulValue)
+            jsonSetValues.add("")  # Placeholder
     
     # Process $unset operator (remove fields)
+    var unsetPaths: seq[string] = @[]
     if "$unset" in updates:
         let fieldsToUnset = updates["$unset"]
         if fieldsToUnset.kind != JObject:
@@ -1166,11 +1171,10 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
             # Skip id field updates
             if key == "id": continue
             
-            # Build json_remove expression
-            let jsonPath = "$." & key
-            jsonSetExpr = "json_remove(" & jsonSetExpr & ", '" & jsonPath & "')"
+            unsetPaths.add("$." & key)
     
     # Process $rename operator (rename fields)
+    var renameOps: seq[tuple[oldPath, newPath: string]] = @[]
     if "$rename" in updates:
         let fieldsToRename = updates["$rename"]
         if fieldsToRename.kind != JObject:
@@ -1185,19 +1189,59 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
             if newKey == "id":
                 raise newException(ValidationError, "Cannot rename to 'id' field")
             
-            # First copy value to new key (if old key exists), then remove old key
-            let oldJsonPath = "$." & oldKey
-            let newJsonPath = "$." & newKey
-            # Copy: json_set(..., '$.newKey', json_extract(_json, '$.oldKey'))
-            let copyExpr = "json_set(" & jsonSetExpr & ", '" & newJsonPath & "', json_extract(_json, '" & oldJsonPath & "'))"
-            # Remove old: json_remove(..., '$.oldKey')
-            jsonSetExpr = "json_remove(" & copyExpr & ", '" & oldJsonPath & "')"
+            renameOps.add(("$." & oldKey, "$." & newKey))
+
+    # Build the SQL expression
+    # Start with _json and apply json_set for each path
+    var sqlExpr = "_json"
+    var bindValues: seq[string] = @[]
+    
+    # Apply $set operations
+    for i in 0..<jsonSetPaths.len:
+        let path = jsonSetPaths[i]
+        
+        # Check if this is a special operation (INC or MUL)
+        if "||INC||" in path:
+            let parts = path.split("||INC||")
+            let jsonPath = parts[0]
+            let incValue = parts[1]
+            # Use json_extract with COALESCE for increment
+            sqlExpr = "json_set(" & sqlExpr & ", ?, COALESCE(json_extract(_json, ?), 0) + " & incValue & ")"
+            bindValues.add(jsonPath)
+            bindValues.add(jsonPath)
+        elif "||MUL||" in path:
+            let parts = path.split("||MUL||")
+            let jsonPath = parts[0]
+            let mulValue = parts[1]
+            # Use json_extract with COALESCE for multiply
+            sqlExpr = "json_set(" & sqlExpr & ", ?, COALESCE(json_extract(_json, ?), 0) * " & mulValue & ")"
+            bindValues.add(jsonPath)
+            bindValues.add(jsonPath)
+        else:
+            # Regular $set operation - use parameter for value
+            sqlExpr = "json_set(" & sqlExpr & ", ?, json(?))"
+            bindValues.add(path)
+            bindValues.add(jsonSetValues[i])
+    
+    # Apply $unset operations (json_remove)
+    for unsetPath in unsetPaths:
+        sqlExpr = "json_remove(" & sqlExpr & ", ?)"
+        bindValues.add(unsetPath)
+    
+    # Apply $rename operations
+    for renameOp in renameOps:
+        # First copy: json_set(..., '$.new', json_extract(_json, '$.old'))
+        sqlExpr = "json_set(" & sqlExpr & ", ?, json_extract(_json, ?))"
+        bindValues.add(renameOp.newPath)
+        bindValues.add(renameOp.oldPath)
+        # Then remove: json_remove(..., '$.old')
+        sqlExpr = "json_remove(" & sqlExpr & ", ?)"
+        bindValues.add(renameOp.oldPath)
 
     # Build the full SQL
-    var sqlStr = "UPDATE documents SET _json = " & jsonSetExpr
+    var sqlStr = "UPDATE documents SET _json = " & sqlExpr
     
     # Add WHERE clause using json_extract
-    var bindValues: seq[string] = @[]
     if this.filters.len > 0:
         sqlStr &= " WHERE "
         var addedFirst = false
@@ -1209,7 +1253,7 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
             bindValues.add(filter.field)
             bindValues.add(filter.value)
     
-    # Execute the query with only filter bind values (no set values needed for json_set)
+    # Execute the query with all bind values
     return int db.conn.execAffectedRows(sql(sqlStr), bindValues)
 
 
