@@ -409,8 +409,17 @@ class SimpleDB:
     ## (private) List of hashes of generated indexes
     var createdIndexHashes: seq[string]
 
-    ## Constructor
-    method init(filename: string) {.gcsafe.} =
+    ## Open a database connection
+    ##
+    ## Parameters:
+    ##   filename: Path to the SQLite database file. Use ":memory:" for an in-memory database.
+    ##
+    ## Example:
+    ##   var db = SimpleDB()
+    ##   db.open("mydb.db")
+    ##   var memDb = SimpleDB()
+    ##   memDb.open(":memory:")
+    method open(filename: string) {.gcsafe.} =
 
         # Create the database connection
         this.conn = open(filename, "", "", "")

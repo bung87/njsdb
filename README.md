@@ -11,8 +11,9 @@ A very simple NoSQL JSON document database written on top of SQLite.
 import simpledb
 import json
 
-# Open or create a database
-var db = SimpleDB.init("database.db")
+# Create a database instance and open a connection
+var db = SimpleDB()
+db.open("database.db")
 
 # Write a document
 db.put(%* {

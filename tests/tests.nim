@@ -6,7 +6,8 @@ suite "SimpleDB":
     test "Create in-memory database":
 
         # Create it
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Check we can put and get
         db.put(%*{"id": "test", "value": 123})
@@ -19,7 +20,8 @@ suite "SimpleDB":
     test "Put and get document":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create a document
         var doc = %*{ "id": "doc1", "name": "Test Document", "value": 42 }
@@ -40,7 +42,8 @@ suite "SimpleDB":
     test "Put and get multiple documents":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create some documents
         for i in 1..10:
@@ -63,7 +66,8 @@ suite "SimpleDB":
     test "Update document":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create a document
         var doc = %*{ "id": "doc1", "name": "Original Name", "value": 42 }
@@ -86,7 +90,8 @@ suite "SimpleDB":
     test "Remove document":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create a document
         var doc = %*{ "id": "doc1", "name": "Test Document" }
@@ -110,7 +115,8 @@ suite "SimpleDB":
     test "Query with where":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create some documents
         for i in 1..10:
@@ -136,7 +142,8 @@ suite "SimpleDB":
     test "Query with sort":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create some documents
         for i in 1..5:
@@ -162,7 +169,8 @@ suite "SimpleDB":
     test "Query with limit and offset":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create some documents
         for i in 1..10:
@@ -195,7 +203,8 @@ suite "SimpleDB":
     test "Query with count":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create some documents
         for i in 1..10:
@@ -220,7 +229,8 @@ suite "SimpleDB":
     test "Query with filter":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create some documents
         for i in 1..10:
@@ -253,7 +263,8 @@ suite "SimpleDB":
     test "Query with $in operator":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create some documents
         for i in 1..10:
@@ -276,7 +287,8 @@ suite "SimpleDB":
     test "Query with boolean filter":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create some documents with boolean field
         for i in 1..10:
@@ -307,7 +319,8 @@ suite "SimpleDB":
     test "Update with $set":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create a document
         var doc = %*{
@@ -338,7 +351,8 @@ suite "SimpleDB":
     test "Update with $set using complex array":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create a document
         var doc = %*{
@@ -374,7 +388,8 @@ suite "SimpleDB":
     test "Batch operations":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Insert multiple documents
         for i in 1..5:
@@ -393,7 +408,8 @@ suite "SimpleDB":
     test "Auto-generated ID":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create document without ID
         var doc = %*{
@@ -419,7 +435,8 @@ suite "SimpleDB":
     test "Distinct values":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create documents with categories
         for i in 1..10:
@@ -439,7 +456,8 @@ suite "SimpleDB":
     test "Query with filter and count":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create documents with categories
         for i in 1..10:
@@ -459,7 +477,8 @@ suite "SimpleDB":
     test "Iterator":
 
         # Create database
-        var db = SimpleDB.init(":memory:")
+        var db = SimpleDB()
+        db.open(":memory:")
 
         # Create some documents
         for i in 1..5:
@@ -488,7 +507,8 @@ suite "SimpleDB Nested Field Queries":
   var db: SimpleDB
 
   setup:
-    db = SimpleDB.init(":memory:")
+    db = SimpleDB()
+    db.open(":memory:")
     # Seed test data with nested objects
     db.put(%*{
       "id": "user-1",
@@ -581,7 +601,8 @@ suite "SimpleDB Logical Operators ($or, $and)":
   var db: SimpleDB
 
   setup:
-    db = SimpleDB.init(":memory:")
+    db = SimpleDB()
+    db.open(":memory:")
     # Seed test data
     db.put(%*{
       "id": "doc-1",
@@ -690,7 +711,8 @@ suite "SimpleDB Array Operators ($all, $size)":
   var db: SimpleDB
 
   setup:
-    db = SimpleDB.init(":memory:")
+    db = SimpleDB()
+    db.open(":memory:")
     # Seed test data with arrays
     db.put(%*{
       "id": "doc-1",
@@ -795,7 +817,8 @@ suite "SimpleDB $exists Operator":
   var db: SimpleDB
 
   setup:
-    db = SimpleDB.init(":memory:")
+    db = SimpleDB()
+    db.open(":memory:")
     # Seed test data - some with optional fields
     # Note: SQLite json_extract returns NULL for both non-existent fields AND null values
     # So $exists: true matches fields with non-null values
@@ -885,7 +908,8 @@ suite "SimpleDB Projection":
   var db: SimpleDB
 
   setup:
-    db = SimpleDB.init(":memory:")
+    db = SimpleDB()
+    db.open(":memory:")
     # Seed test data
     db.put(%*{
       "id": "doc-1",
@@ -989,7 +1013,8 @@ suite "SimpleDB Extended Aggregation":
   var db: SimpleDB
 
   setup:
-    db = SimpleDB.init(":memory:")
+    db = SimpleDB()
+    db.open(":memory:")
     # Seed test data - sales data
     db.put(%*{ "id": "sale-1", "category": "electronics", "amount": 100.0, "quantity": 2 })
     db.put(%*{ "id": "sale-2", "category": "electronics", "amount": 200.0, "quantity": 1 })
@@ -1067,7 +1092,8 @@ suite "SimpleDB Bulk Operations":
   var db: SimpleDB
 
   setup:
-    db = SimpleDB.init(":memory:")
+    db = SimpleDB()
+    db.open(":memory:")
 
   teardown:
     db.close()
