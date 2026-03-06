@@ -1684,6 +1684,7 @@ proc aggregate*(this: SimpleDB, pipeline: seq[JsonNode]): AggregatePipelineResul
     var limitVal = -1
     var skipVal = 0
     var projectFields: seq[string] = @[]
+    var countField = ""  # For $count stage
     
     for stage in pipeline:
         if stage.kind != JObject or stage.len == 0:
@@ -1736,6 +1737,12 @@ proc aggregate*(this: SimpleDB, pipeline: seq[JsonNode]): AggregatePipelineResul
                 for field, val in stageValue.pairs:
                     if val.kind == JInt and val.getInt() == 1:
                         projectFields.add(field)
+        of "$count":
+            # $count stage - returns a single document with the count
+            if stageValue.kind == JString:
+                countField = stageValue.getStr()
+            else:
+                countField = "count"  # default field name
     
     # Build base query
     var query = this.query()
@@ -1903,5 +1910,10 @@ proc aggregate*(this: SimpleDB, pipeline: seq[JsonNode]): AggregatePipelineResul
         for row in this.conn.rows(sql(sqlStr), allBindValues):
             var doc = row[0].parseJson()
             result.data.add(doc)
+    
+    # Handle $count stage - return a single document with the count
+    if countField.len > 0:
+        let countValue = result.data.len
+        result.data = @[%*{(countField): countValue}]
     
     result.count = result.data.len

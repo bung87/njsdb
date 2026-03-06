@@ -573,6 +573,34 @@ suite "SimpleDB Aggregate Pipeline":
 
     check result.count == 2
 
+  test "Aggregate with $count stage":
+    db.put(%*{ "id": "o1", "activityId": "a1" })
+    db.put(%*{ "id": "o2", "activityId": "a1" })
+    db.put(%*{ "id": "o3", "activityId": "a2" })
+    db.put(%*{ "id": "o4", "activityId": "a3" })
+
+    let result = db.aggregate(@[
+      %*{ "$match": { "activityId": { "$ne": "" } } },
+      %*{ "$group": { "_id": "$activityId" } },
+      %*{ "$count": "distinctCount" }
+    ])
+
+    check result.count == 1
+    check result.data[0]["distinctCount"].getInt == 3
+
+  test "Aggregate with $count stage - default field name":
+    db.put(%*{ "id": "o1", "status": "completed" })
+    db.put(%*{ "id": "o2", "status": "completed" })
+    db.put(%*{ "id": "o3", "status": "pending" })
+
+    let result = db.aggregate(@[
+      %*{ "$match": { "status": "completed" } },
+      %*{ "$count": "count" }
+    ])
+
+    check result.count == 1
+    check result.data[0]["count"].getInt == 2
+
 
 # Clean up test database
 removeFile("test.db")
