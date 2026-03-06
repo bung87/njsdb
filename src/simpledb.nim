@@ -404,7 +404,7 @@ class SimpleDB:
     var hasPrepared = false
 
     ## (private) Extra columns that have been created for indexing
-    var extraColumns: seq[string] = @["id_TEXT"]
+    var extraColumns: seq[string] = @["id"]
 
     ## (private) List of hashes of generated indexes
     var createdIndexHashes: seq[string]
@@ -455,7 +455,7 @@ class SimpleDB:
 
         # Reset prepared flag since we're switching to a different table
         this.hasPrepared = false
-        this.extraColumns = @["id_TEXT"]
+        this.extraColumns = @["id"]
         this.createdIndexHashes = @[]
 
         # Prepare the new collection
@@ -477,7 +477,7 @@ class SimpleDB:
             raise newException(SimpleDBError, "No collection selected. Call collection(name) first.")
 
         # Create collection table if it doesn't exist
-        let createTableSql = "CREATE TABLE IF NOT EXISTS " & this.currentCollection & " (id_TEXT TEXT PRIMARY KEY, _json TEXT)"
+        let createTableSql = "CREATE TABLE IF NOT EXISTS " & this.currentCollection & " (id TEXT PRIMARY KEY, _json TEXT)"
         this.conn.exec(sql createTableSql)
 
         # Get list of all columns in the table
@@ -549,8 +549,8 @@ class SimpleDB:
             this.conn.exec(sql(str))
 
             # Fetch all existing documents ... this is heavy, but we can't iterate and modify at the same time
-            let sqlUpdateRow = sql("UPDATE " & this.currentCollection & " SET \"" & sqlName & "\" = ? WHERE id_TEXT = ?")
-            let selectSql = "SELECT id_TEXT, _json FROM " & this.currentCollection
+            let sqlUpdateRow = sql("UPDATE " & this.currentCollection & " SET \"" & sqlName & "\" = ? WHERE id = ?")
+            let selectSql = "SELECT id, _json FROM " & this.currentCollection
             for row in this.conn.getAllRows(sql(selectSql)):
 
                 # Parse this document
@@ -1497,8 +1497,8 @@ proc writeDocument(this: SimpleDB, document: JsonNode) =
     # Add fields for the extra columns
     for columnName in this.extraColumns:
 
-        # Get field name by removing the sql suffix
-        let fieldName = columnName.substr(0, columnName.len - 6)
+        # Get field name - for "id" column, use "id" field directly
+        let fieldName = if columnName == "id": "id" else: columnName.substr(0, columnName.len - 6)
 
         # Add it
         args.add docCopy{fieldName}.getStr()
