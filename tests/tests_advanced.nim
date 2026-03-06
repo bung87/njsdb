@@ -470,6 +470,21 @@ suite "SimpleDB Bulk Operations":
     check deleted == 5
     check db.query().count() == 5
 
+  test "Batch operations":
+    # Test batch transaction - batch wraps multiple operations in a transaction
+    # Use pointer to avoid GC-safety issues with captured var
+    let dbPtr = addr db
+    db.batch(proc() {.gcsafe.} =
+      dbPtr[].put(%*{ "id": "batch1", "name": "Item 1" })
+      dbPtr[].put(%*{ "id": "batch2", "name": "Item 2" })
+      dbPtr[].put(%*{ "id": "batch3", "name": "Item 3" })
+    )
+
+    check db.query().count() == 3
+    check db.get("batch1")["name"].getStr == "Item 1"
+    check db.get("batch2")["name"].getStr == "Item 2"
+    check db.get("batch3")["name"].getStr == "Item 3"
+
 
 suite "SimpleDB Aggregate Pipeline":
   var db: SimpleDB
