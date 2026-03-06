@@ -1643,3 +1643,265 @@ proc bulkDelete*(this: SimpleDB, ids: seq[string]): int {.discardable.} =
             if this.removeOne(id):
                 count += 1
     return count
+
+
+## Aggregation pipeline stage types
+type AggregateStage* = enum
+    asMatch    ## $match - Filter documents
+    asGroup    ## $group - Group by field and aggregate
+    asSort     ## $sort - Sort results
+    asLimit    ## $limit - Limit number of results
+    asSkip     ## $skip - Skip number of results
+    asProject  ## $project - Select fields
+
+## Aggregation pipeline result
+type AggregatePipelineResult* = object
+    data*: seq[JsonNode]  ## Result documents
+    count*: int           ## Total count (before limit)
+
+## MongoDB-style aggregation pipeline
+## Supports: $match, $group, $sort, $limit, $skip, $project
+## Example:
+##   db.collection("orders").aggregate(@[
+##     %*{ "$match": { "status": "completed" } },
+##     %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } },
+##     %*{ "$sort": { "total": -1 } },
+##     %*{ "$limit": 10 }
+##   ])
+proc aggregate*(this: SimpleDB, pipeline: seq[JsonNode]): AggregatePipelineResult {.gcsafe.} =
+    ## Executes an aggregation pipeline
+    ## Returns aggregated results as JsonNode sequence
+    
+    # Prepare database
+    this.prepareDB()
+    
+    # Parse pipeline stages
+    var matchFilter: JsonNode = nil
+    var groupField = ""
+    var groupAggregations: JsonNode = nil
+    var sortField = ""
+    var sortAscending = true
+    var limitVal = -1
+    var skipVal = 0
+    var projectFields: seq[string] = @[]
+    
+    for stage in pipeline:
+        if stage.kind != JObject or stage.len == 0:
+            continue
+        
+        # Get the first field name (stage type)
+        var stageName = ""
+        var stageValue: JsonNode = nil
+        for key, val in stage.pairs:
+            stageName = key
+            stageValue = val
+            break
+        
+        case stageName:
+        of "$match":
+            matchFilter = stageValue
+        of "$group":
+            if stageValue.kind == JObject:
+                if "_id" in stageValue:
+                    let idVal = stageValue["_id"]
+                    if idVal.kind == JString:
+                        # Handle "$field" format
+                        var idStr = idVal.getStr()
+                        if idStr.startsWith("$"):
+                            idStr = idStr.substr(1)
+                        groupField = idStr
+                # Get aggregation operators (everything except _id)
+                groupAggregations = newJObject()
+                for key, val in stageValue.pairs:
+                    if key != "_id":
+                        groupAggregations[key] = val
+        of "$sort":
+            if stageValue.kind == JObject and stageValue.len > 0:
+                for key, val in stageValue.pairs:
+                    sortField = key
+                    let sortOrder = val
+                    if sortOrder.kind == JInt:
+                        sortAscending = sortOrder.getInt() > 0
+                    elif sortOrder.kind == JFloat:
+                        sortAscending = sortOrder.getFloat() > 0
+                    break
+        of "$limit":
+            if stageValue.kind == JInt:
+                limitVal = stageValue.getInt()
+        of "$skip":
+            if stageValue.kind == JInt:
+                skipVal = stageValue.getInt()
+        of "$project":
+            if stageValue.kind == JObject:
+                for field, val in stageValue.pairs:
+                    if val.kind == JInt and val.getInt() == 1:
+                        projectFields.add(field)
+    
+    # Build base query
+    var query = this.query()
+    
+    # Apply match filter
+    if matchFilter != nil and matchFilter.len > 0:
+        query = query.filter(matchFilter)
+    
+    # Get WHERE clause
+    let (whereSql, bindValues) = prepareQuerySql(query, "")
+    
+    # Build SQL based on whether we have grouping
+    var sqlStr = ""
+    var allBindValues: seq[string] = @[]
+    
+    if groupField.len > 0:
+        # Aggregation query with GROUP BY
+        var selectFields = @[
+            "json_extract(_json, '$.' || ?) as _id",
+            "COUNT(*) as count"
+        ]
+        allBindValues.add(groupField)
+        
+        # Parse aggregation operators
+        var hasSum = false
+        var hasAvg = false
+        var hasMin = false
+        var hasMax = false
+        var sumField = ""
+        var avgField = ""
+        var minField = ""
+        var maxField = ""
+        var sumAlias = ""
+        var avgAlias = ""
+        var minAlias = ""
+        var maxAlias = ""
+        
+        if groupAggregations != nil and groupAggregations.kind == JObject:
+            for alias, aggDef in groupAggregations.pairs:
+                if aggDef.kind == JObject:
+                    if "$sum" in aggDef:
+                        hasSum = true
+                        sumAlias = alias
+                        let sumVal = aggDef["$sum"]
+                        if sumVal.kind == JString:
+                            sumField = sumVal.getStr()
+                            if sumField.startsWith("$"):
+                                sumField = sumField.substr(1)
+                            selectFields.add("SUM(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
+                            allBindValues.add(sumField)
+                        elif sumVal.kind == JInt and sumVal.getInt() == 1:
+                            # $sum: 1 means count - use COUNT(*) instead
+                            selectFields.add("COUNT(*) as " & alias)
+                        else:
+                            # Other numeric sum
+                            selectFields.add("SUM(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
+                            allBindValues.add(sumField)
+                    if "$avg" in aggDef:
+                        hasAvg = true
+                        avgAlias = alias
+                        let avgVal = aggDef["$avg"]
+                        if avgVal.kind == JString:
+                            avgField = avgVal.getStr()
+                            if avgField.startsWith("$"):
+                                avgField = avgField.substr(1)
+                        selectFields.add("AVG(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
+                        allBindValues.add(avgField)
+                    if "$min" in aggDef:
+                        hasMin = true
+                        minAlias = alias
+                        let minVal = aggDef["$min"]
+                        if minVal.kind == JString:
+                            minField = minVal.getStr()
+                            if minField.startsWith("$"):
+                                minField = minField.substr(1)
+                        selectFields.add("MIN(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
+                        allBindValues.add(minField)
+                    if "$max" in aggDef:
+                        hasMax = true
+                        maxAlias = alias
+                        let maxVal = aggDef["$max"]
+                        if maxVal.kind == JString:
+                            maxField = maxVal.getStr()
+                            if maxField.startsWith("$"):
+                                maxField = maxField.substr(1)
+                        selectFields.add("MAX(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
+                        allBindValues.add(maxField)
+        
+        sqlStr = "SELECT " & selectFields.join(", ") & " FROM " & this.currentCollection
+        
+        # Add WHERE clause
+        if whereSql.len > 0:
+            sqlStr &= whereSql
+            allBindValues.add(bindValues)
+        
+        # Add GROUP BY
+        sqlStr &= " GROUP BY json_extract(_json, '$.' || ?)"
+        allBindValues.add(groupField)
+        
+        # Add ORDER BY for sorting
+        if sortField.len > 0:
+            let sortDir = if sortAscending: "ASC" else: "DESC"
+            sqlStr &= " ORDER BY " & sortField & " " & sortDir
+        
+        # Add LIMIT and OFFSET
+        if limitVal > 0:
+            sqlStr &= " LIMIT " & $limitVal
+        if skipVal > 0:
+            sqlStr &= " OFFSET " & $skipVal
+        
+        # Execute aggregation query
+        result.data = @[]
+        for row in this.conn.rows(sql(sqlStr), allBindValues):
+            var doc = newJObject()
+            doc["_id"] = %row[0]
+            doc["count"] = %parseInt(row[1])
+            
+            var colIdx = 2
+            if hasSum:
+                if row[colIdx].len > 0:
+                    # Check if this was a $sum: 1 (count) or actual sum
+                    if sumField.len > 0:
+                        doc[sumAlias] = %parseFloat(row[colIdx])
+                    else:
+                        doc[sumAlias] = %parseInt(row[colIdx])
+                colIdx += 1
+            if hasAvg:
+                if row[colIdx].len > 0:
+                    doc[avgAlias] = %parseFloat(row[colIdx])
+                colIdx += 1
+            if hasMin:
+                if row[colIdx].len > 0:
+                    doc[minAlias] = %parseFloat(row[colIdx])
+                colIdx += 1
+            if hasMax:
+                if row[colIdx].len > 0:
+                    doc[maxAlias] = %parseFloat(row[colIdx])
+                colIdx += 1
+            
+            result.data.add(doc)
+    
+    else:
+        # No grouping - just filter, sort, limit
+        sqlStr = "SELECT _json FROM " & this.currentCollection
+        
+        # Add WHERE clause
+        if whereSql.len > 0:
+            sqlStr &= whereSql
+            allBindValues = bindValues
+        
+        # Add ORDER BY for sorting
+        if sortField.len > 0:
+            let sortDir = if sortAscending: "ASC" else: "DESC"
+            sqlStr &= " ORDER BY json_extract(_json, '$.' || ?) " & sortDir
+            allBindValues.add(sortField)
+        
+        # Add LIMIT and OFFSET
+        if limitVal > 0:
+            sqlStr &= " LIMIT " & $limitVal
+        if skipVal > 0:
+            sqlStr &= " OFFSET " & $skipVal
+        
+        # Execute query
+        result.data = @[]
+        for row in this.conn.rows(sql(sqlStr), allBindValues):
+            var doc = row[0].parseJson()
+            result.data.add(doc)
+    
+    result.count = result.data.len

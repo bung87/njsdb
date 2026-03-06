@@ -1304,3 +1304,143 @@ suite "SimpleDB Collections":
     # Verify doc1 is gone from active but still in archived
     check db.collection("active").get("doc1") == nil
     check db.collection("archived").get("doc1") != nil
+
+
+suite "SimpleDB Aggregate Pipeline":
+  var db: SimpleDB
+
+  setup:
+    db = SimpleDB()
+    db.open(":memory:")
+    discard db.collection("orders")
+
+  teardown:
+    db.close()
+
+  test "Aggregate with $match and $group":
+    # Insert test data
+    db.put(%*{ "id": "o1", "customerId": "c1", "amount": 100, "status": "completed" })
+    db.put(%*{ "id": "o2", "customerId": "c1", "amount": 200, "status": "completed" })
+    db.put(%*{ "id": "o3", "customerId": "c2", "amount": 150, "status": "completed" })
+    db.put(%*{ "id": "o4", "customerId": "c2", "amount": 50, "status": "pending" })
+    
+    # Aggregate: group by customerId, sum amounts
+    let result = db.aggregate(@[
+      %*{ "$match": { "status": "completed" } },
+      %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } }
+    ])
+    
+    check result.count == 2
+    
+    # Find the result for c1
+    var c1Total = 0.0
+    var c2Total = 0.0
+    for doc in result.data:
+      if doc["_id"].getStr == "c1":
+        c1Total = doc["total"].getFloat
+      elif doc["_id"].getStr == "c2":
+        c2Total = doc["total"].getFloat
+    
+    check c1Total == 300.0  # 100 + 200
+    check c2Total == 150.0  # 150
+
+  test "Aggregate with $sum: 1 (count)":
+    # Insert test data
+    db.put(%*{ "id": "o1", "customerId": "c1", "status": "completed" })
+    db.put(%*{ "id": "o2", "customerId": "c1", "status": "completed" })
+    db.put(%*{ "id": "o3", "customerId": "c2", "status": "completed" })
+    
+    # Aggregate: count orders per customer
+    let result = db.aggregate(@[
+      %*{ "$group": { "_id": "$customerId", "orderCount": { "$sum": 1 } } }
+    ])
+    
+    check result.count == 2
+    
+    for doc in result.data:
+      if doc["_id"].getStr == "c1":
+        check doc["orderCount"].getInt == 2
+      elif doc["_id"].getStr == "c2":
+        check doc["orderCount"].getInt == 1
+
+  test "Aggregate with $avg, $min, $max":
+    # Insert test data
+    db.put(%*{ "id": "o1", "customerId": "c1", "amount": 100 })
+    db.put(%*{ "id": "o2", "customerId": "c1", "amount": 200 })
+    db.put(%*{ "id": "o3", "customerId": "c1", "amount": 300 })
+    
+    # Aggregate: calculate avg, min, max
+    let result = db.aggregate(@[
+      %*{ "$group": { "_id": "$customerId", "avgAmount": { "$avg": "$amount" }, "minAmount": { "$min": "$amount" }, "maxAmount": { "$max": "$amount" } } }
+    ])
+    
+    check result.count == 1
+    check result.data[0]["avgAmount"].getFloat == 200.0
+    check result.data[0]["minAmount"].getFloat == 100.0
+    check result.data[0]["maxAmount"].getFloat == 300.0
+
+  test "Aggregate with $sort and $limit":
+    # Insert test data
+    db.put(%*{ "id": "o1", "customerId": "c1", "amount": 100 })
+    db.put(%*{ "id": "o2", "customerId": "c2", "amount": 200 })
+    db.put(%*{ "id": "o3", "customerId": "c3", "amount": 50 })
+    db.put(%*{ "id": "o4", "customerId": "c4", "amount": 300 })
+    
+    # Aggregate: group and sort by total descending, limit to 2
+    let result = db.aggregate(@[
+      %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } },
+      %*{ "$sort": { "total": -1 } },
+      %*{ "$limit": 2 }
+    ])
+    
+    check result.count == 2
+    # Should return c4 (300) and c2 (200) in that order
+    check result.data[0]["_id"].getStr == "c4"
+    check result.data[0]["total"].getFloat == 300.0
+    check result.data[1]["_id"].getStr == "c2"
+    check result.data[1]["total"].getFloat == 200.0
+
+  test "Aggregate pipeline without $group (just filter and sort)":
+    # Insert test data
+    db.put(%*{ "id": "o1", "status": "completed", "priority": 3 })
+    db.put(%*{ "id": "o2", "status": "pending", "priority": 1 })
+    db.put(%*{ "id": "o3", "status": "completed", "priority": 5 })
+    db.put(%*{ "id": "o4", "status": "completed", "priority": 2 })
+    
+    # Just filter and sort, no grouping
+    let result = db.aggregate(@[
+      %*{ "$match": { "status": "completed" } },
+      %*{ "$sort": { "priority": -1 } },
+      %*{ "$limit": 2 }
+    ])
+    
+    check result.count == 2
+    # Should return o3 (priority 5) and o1 (priority 3)
+    check result.data[0]["id"].getStr == "o3"
+    check result.data[1]["id"].getStr == "o1"
+
+  test "Aggregate with complex $match filter":
+    # Insert test data
+    db.put(%*{ "id": "o1", "customerId": "c1", "amount": 100, "status": "completed" })
+    db.put(%*{ "id": "o2", "customerId": "c1", "amount": 200, "status": "completed" })
+    db.put(%*{ "id": "o3", "customerId": "c2", "amount": 50, "status": "pending" })
+    db.put(%*{ "id": "o4", "customerId": "c2", "amount": 300, "status": "completed" })
+    
+    # Match with $ne operator
+    let result = db.aggregate(@[
+      %*{ "$match": { "status": { "$ne": "pending" } } },
+      %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } }
+    ])
+    
+    check result.count == 2
+    
+    var c1Total = 0.0
+    var c2Total = 0.0
+    for doc in result.data:
+      if doc["_id"].getStr == "c1":
+        c1Total = doc["total"].getFloat
+      elif doc["_id"].getStr == "c2":
+        c2Total = doc["total"].getFloat
+    
+    check c1Total == 300.0  # Both c1 orders are completed
+    check c2Total == 300.0  # Only the 300 order is completed (not pending)

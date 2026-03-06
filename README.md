@@ -330,6 +330,57 @@ let filter = %*{ "status": "active" }
 let result = db.aggregate("category", %*{"$sum": "amount"}, filter)
 ```
 
+## MongoDB-style Aggregation Pipeline
+
+SimpleDB now supports MongoDB-style aggregation pipelines with `$match`, `$group`, `$sort`, `$limit`, and `$skip` stages.
+
+```nim
+# Basic aggregation pipeline: match and group
+let result = db.collection("orders").aggregate(@[
+  %*{ "$match": { "status": "completed" } },
+  %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } }
+])
+
+for doc in result.data:
+  echo "Customer: ", doc["_id"].getStr
+  echo "Total: ", doc["total"].getFloat
+
+# Count documents per group
+let result = db.collection("orders").aggregate(@[
+  %*{ "$group": { "_id": "$customerId", "orderCount": { "$sum": 1 } } }
+])
+
+# Multiple aggregation operators
+let result = db.collection("sales").aggregate(@[
+  %*{ "$match": { "year": 2024 } },
+  %*{ "$group": { 
+    "_id": "$region", 
+    "totalSales": { "$sum": "$amount" },
+    "avgSale": { "$avg": "$amount" },
+    "minSale": { "$min": "$amount" },
+    "maxSale": { "$max": "$amount" }
+  } },
+  %*{ "$sort": { "totalSales": -1 } },
+  %*{ "$limit": 10 }
+])
+
+# Pipeline without grouping (just filter, sort, limit)
+let result = db.collection("products").aggregate(@[
+  %*{ "$match": { "category": "electronics" } },
+  %*{ "$sort": { "price": -1 } },
+  %*{ "$limit": 5 }
+])
+
+# Complex match conditions
+let result = db.collection("orders").aggregate(@[
+  %*{ "$match": { 
+    "status": { "$ne": "cancelled" },
+    "amount": { "$gte": 100 }
+  } },
+  %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } }
+])
+```
+
 ## Query Explain
 
 ```nim
