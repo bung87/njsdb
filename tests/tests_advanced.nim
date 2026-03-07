@@ -1,11 +1,11 @@
 import std/[unittest, json, os]
-import simpledb
+import njsdb
 
-suite "SimpleDB Nested Field Queries":
-  var db: SimpleDB
+suite "NJSDB Nested Field Queries":
+  var db: NJSDB
 
   setup:
-    db = SimpleDB()
+    db = NJSDB()
     db.open(":memory:")
     discard db.collection("documents")
 
@@ -89,11 +89,11 @@ suite "SimpleDB Nested Field Queries":
     check docs.len == 1
 
 
-suite "SimpleDB Logical Operators ($or, $and)":
-  var db: SimpleDB
+suite "NJSDB Logical Operators ($or, $and)":
+  var db: NJSDB
 
   setup:
-    db = SimpleDB()
+    db = NJSDB()
     db.open(":memory:")
     discard db.collection("documents")
 
@@ -189,11 +189,11 @@ suite "SimpleDB Logical Operators ($or, $and)":
     check docs.len == 1
 
 
-suite "SimpleDB Array Operators ($all, $size)":
-  var db: SimpleDB
+suite "NJSDB Array Operators ($all, $size)":
+  var db: NJSDB
 
   setup:
-    db = SimpleDB()
+    db = NJSDB()
     db.open(":memory:")
     discard db.collection("documents")
 
@@ -264,11 +264,11 @@ suite "SimpleDB Array Operators ($all, $size)":
     check docs.len == 1
 
 
-suite "SimpleDB $exists Operator":
-  var db: SimpleDB
+suite "NJSDB $exists Operator":
+  var db: NJSDB
 
   setup:
-    db = SimpleDB()
+    db = NJSDB()
     db.open(":memory:")
     discard db.collection("documents")
 
@@ -326,11 +326,11 @@ suite "SimpleDB $exists Operator":
     check docs.len == 2
 
 
-suite "SimpleDB Projection":
-  var db: SimpleDB
+suite "NJSDB Projection":
+  var db: NJSDB
 
   setup:
-    db = SimpleDB()
+    db = NJSDB()
     db.open(":memory:")
     discard db.collection("documents")
 
@@ -400,11 +400,11 @@ suite "SimpleDB Projection":
     check docs[0].hasKey("address")
 
 
-suite "SimpleDB Extended Aggregation":
-  var db: SimpleDB
+suite "NJSDB Extended Aggregation":
+  var db: NJSDB
 
   setup:
-    db = SimpleDB()
+    db = NJSDB()
     db.open(":memory:")
     discard db.collection("documents")
 
@@ -439,11 +439,11 @@ suite "SimpleDB Extended Aggregation":
     check result.len == 1
 
 
-suite "SimpleDB Bulk Operations":
-  var db: SimpleDB
+suite "NJSDB Bulk Operations":
+  var db: NJSDB
 
   setup:
-    db = SimpleDB()
+    db = NJSDB()
     db.open(":memory:")
     discard db.collection("documents")
 
@@ -486,11 +486,11 @@ suite "SimpleDB Bulk Operations":
     check db.get("batch3")["name"].getStr == "Item 3"
 
 
-suite "SimpleDB Aggregate Pipeline":
-  var db: SimpleDB
+suite "NJSDB Aggregate Pipeline":
+  var db: NJSDB
 
   setup:
-    db = SimpleDB()
+    db = NJSDB()
     db.open(":memory:")
     discard db.collection("orders")
 

@@ -1,4 +1,4 @@
-# SimpleDB
+# NJSDB
 
 ![](https://img.shields.io/badge/status-beta-orange)
 ![](https://img.shields.io/badge/platforms-native%20only-orange)
@@ -8,11 +8,11 @@ A very simple NoSQL JSON document database written on top of SQLite.
 ## Usage
 
 ```nim
-import simpledb
+import njsdb
 import json
 
 # Create a database instance and open a connection
-var db = SimpleDB()
+var db = NJSDB()
 db.open("database.db")
 
 # Select a collection (table) to work with
@@ -71,7 +71,7 @@ db.close()
 
 ## Collections
 
-SimpleDB supports multiple collections (tables) in the same database. Each collection is stored in a separate SQLite table, providing data isolation and avoiding table-level lock contention.
+NJSDB supports multiple collections (tables) in the same database. Each collection is stored in a separate SQLite table, providing data isolation and avoiding table-level lock contention.
 
 ### Selecting a Collection
 
@@ -111,12 +111,12 @@ echo archived["status"].getStr  # "archived"
 
 ### Important Note
 
-You **must** call `collection()` before any database operation. If you don't, a `SimpleDBError` will be raised:
+You **must** call `collection()` before any database operation. If you don't, a `NJSDBError` will be raised:
 
 ```nim
 db.open("database.db")
 # Missing: db.collection("...")
-db.put(%* { "id": "test" })  # Raises SimpleDBError: No collection selected
+db.put(%* { "id": "test" })  # Raises NJSDBError: No collection selected
 ```
 
 ## Query Operators
@@ -332,7 +332,7 @@ let result = db.aggregate("category", %*{"$sum": "amount"}, filter)
 
 ## MongoDB-style Aggregation Pipeline
 
-SimpleDB now supports MongoDB-style aggregation pipelines with `$match`, `$group`, `$sort`, `$limit`, and `$skip` stages.
+NJSDB now supports MongoDB-style aggregation pipelines with `$match`, `$group`, `$sort`, `$limit`, and `$skip` stages.
 
 ```nim
 # Basic aggregation pipeline: match and group

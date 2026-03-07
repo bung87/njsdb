@@ -4,14 +4,14 @@ import classes
 
 
 ##
-## Exception types for SimpleDB
-type SimpleDBError* = object of CatchableError
-    ## Base exception for all SimpleDB errors
+## Exception types for NJSDB
+type NJSDBError* = object of CatchableError
+    ## Base exception for all NJSDB errors
 
-type ValidationError* = object of SimpleDBError
+type ValidationError* = object of NJSDBError
     ## Raised when input validation fails
 
-type DocumentError* = object of SimpleDBError
+type DocumentError* = object of NJSDBError
     ## Raised when document operations fail
 
 
@@ -42,7 +42,7 @@ type ArrayOp = enum
 
 ##
 ## Query filter info for a single condition
-class SimpleDBFilter:
+class NJSDBFilter:
     var field = ""
     var operation = ""
     var value = ""
@@ -52,13 +52,13 @@ class SimpleDBFilter:
 
 ##
 ## Logical filter group for $and/$or operations
-class SimpleDBLogicalFilter:
+class NJSDBLogicalFilter:
     var op: LogicalOp
-    var filters: seq[SimpleDBFilter]
+    var filters: seq[NJSDBFilter]
 
 ##
 ## Array filter for array operations ($all, $size)
-class SimpleDBArrayFilter:
+class NJSDBArrayFilter:
     var field = ""
     var op: ArrayOp
     var values: seq[string] = @[]  # For $all operation
@@ -66,19 +66,19 @@ class SimpleDBArrayFilter:
 
 ##
 ## Exists filter for $exists operator
-class SimpleDBExistsFilter:
+class NJSDBExistsFilter:
     var field = ""
     var exists = true  # true = field exists, false = field does not exist
 
 ##
 ## Type filter for $type operator
-class SimpleDBTypeFilter:
+class NJSDBTypeFilter:
     var field = ""
     var jsonType = ""  # "string", "number", "boolean", "array", "object", "null"
 
 ##
 ## Regex filter for $regex operator
-class SimpleDBRegexFilter:
+class NJSDBRegexFilter:
     var field = ""
     var pattern = ""
     var options = ""  # "i" for case-insensitive (using GLOB)
@@ -96,30 +96,30 @@ proc validateWhereParams(field, operation: string) {.inline.} =
 
 ##
 ## Query builder
-class SimpleDBQuery:
+class NJSDBQuery:
 
     ## Reference to the database
-    ## Note: Using pointer to avoid circular dependency with SimpleDB
-    ## The query() method allocates a stable copy of SimpleDB on the heap
+    ## Note: Using pointer to avoid circular dependency with NJSDB
+    ## The query() method allocates a stable copy of NJSDB on the heap
     var db: pointer
 
     ## List of filters
-    var filters : seq[SimpleDBFilter]
+    var filters : seq[NJSDBFilter]
 
     ## List of logical filter groups ($and, $or)
-    var logicalFilters: seq[SimpleDBLogicalFilter]
+    var logicalFilters: seq[NJSDBLogicalFilter]
 
     ## List of array filters ($all, $size)
-    var arrayFilters: seq[SimpleDBArrayFilter]
+    var arrayFilters: seq[NJSDBArrayFilter]
 
     ## List of exists filters ($exists)
-    var existsFilters: seq[SimpleDBExistsFilter]
+    var existsFilters: seq[NJSDBExistsFilter]
 
     ## List of type filters ($type)
-    var typeFilters: seq[SimpleDBTypeFilter]
+    var typeFilters: seq[NJSDBTypeFilter]
 
     ## List of regex filters ($regex)
-    var regexFilters: seq[SimpleDBRegexFilter]
+    var regexFilters: seq[NJSDBRegexFilter]
 
     ## Projection fields (field selection)
     var projection: JsonNode = nil  # nil means no projection (return all fields)
@@ -137,22 +137,22 @@ class SimpleDBQuery:
     var pOffset = 0
 
     ## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
-    method where(field: string, operation: string, value: string): SimpleDBQuery {.gcsafe.} =
+    method where(field: string, operation: string, value: string): NJSDBQuery {.gcsafe.} =
         validateWhereParams(field, operation)
-        let filter = SimpleDBFilter(field: field, operation: operation, value: value, fieldIsNumber: false)
+        let filter = NJSDBFilter(field: field, operation: operation, value: value, fieldIsNumber: false)
         this.filters.add(filter)
         return this
 
     ## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
-    method where(field: string, operation: string, value: float): SimpleDBQuery {.gcsafe.} =
+    method where(field: string, operation: string, value: float): NJSDBQuery {.gcsafe.} =
         validateWhereParams(field, operation)
-        let filter = SimpleDBFilter(field: field, operation: operation, value: $value, fieldIsNumber: true)
+        let filter = NJSDBFilter(field: field, operation: operation, value: $value, fieldIsNumber: true)
         this.filters.add(filter)
         return this
     
 
     ## (chainable) Add a filter from a JsonNode filter object (supports MongoDB-style $in)
-    method filter(filterObj: JsonNode): SimpleDBQuery {.gcsafe.} =
+    method filter(filterObj: JsonNode): NJSDBQuery {.gcsafe.} =
 
         # Check input
         if filterObj == nil or filterObj.kind != JObject:
@@ -168,7 +168,7 @@ class SimpleDBQuery:
                 else: return $node
 
         # Helper to process a single field condition and return a filter
-        proc processCondition(field: string, val: JsonNode): SimpleDBFilter =
+        proc processCondition(field: string, val: JsonNode): NJSDBFilter =
             if val.kind == JObject:
                 # Check for MongoDB-style operators like $in
                 if "$in" in val:
@@ -177,47 +177,47 @@ class SimpleDBQuery:
                         var values: seq[string] = @[]
                         for v in inValues:
                             values.add(jsonToString(v))
-                        return SimpleDBFilter(field: field, operation: "IN", values: values, fieldIsNumber: false)
+                        return NJSDBFilter(field: field, operation: "IN", values: values, fieldIsNumber: false)
                 elif "$eq" in val:
                     let eqVal = val["$eq"]
                     let isNum = eqVal.kind == JInt or eqVal.kind == JFloat
-                    return SimpleDBFilter(field: field, operation: "==", value: jsonToString(eqVal), fieldIsNumber: isNum)
+                    return NJSDBFilter(field: field, operation: "==", value: jsonToString(eqVal), fieldIsNumber: isNum)
                 elif "$ne" in val:
                     let neVal = val["$ne"]
                     let isNum = neVal.kind == JInt or neVal.kind == JFloat
-                    return SimpleDBFilter(field: field, operation: "!=", value: jsonToString(neVal), fieldIsNumber: isNum)
+                    return NJSDBFilter(field: field, operation: "!=", value: jsonToString(neVal), fieldIsNumber: isNum)
                 elif "$gt" in val:
                     let gtVal = val["$gt"]
                     let isNum = gtVal.kind == JInt or gtVal.kind == JFloat
-                    return SimpleDBFilter(field: field, operation: ">", value: jsonToString(gtVal), fieldIsNumber: isNum)
+                    return NJSDBFilter(field: field, operation: ">", value: jsonToString(gtVal), fieldIsNumber: isNum)
                 elif "$gte" in val:
                     let gteVal = val["$gte"]
                     let isNum = gteVal.kind == JInt or gteVal.kind == JFloat
-                    return SimpleDBFilter(field: field, operation: ">=", value: jsonToString(gteVal), fieldIsNumber: isNum)
+                    return NJSDBFilter(field: field, operation: ">=", value: jsonToString(gteVal), fieldIsNumber: isNum)
                 elif "$lt" in val:
                     let ltVal = val["$lt"]
                     let isNum = ltVal.kind == JInt or ltVal.kind == JFloat
-                    return SimpleDBFilter(field: field, operation: "<", value: jsonToString(ltVal), fieldIsNumber: isNum)
+                    return NJSDBFilter(field: field, operation: "<", value: jsonToString(ltVal), fieldIsNumber: isNum)
                 elif "$lte" in val:
                     let lteVal = val["$lte"]
                     let isNum = lteVal.kind == JInt or lteVal.kind == JFloat
-                    return SimpleDBFilter(field: field, operation: "<=", value: jsonToString(lteVal), fieldIsNumber: isNum)
+                    return NJSDBFilter(field: field, operation: "<=", value: jsonToString(lteVal), fieldIsNumber: isNum)
             elif val.kind == JString:
-                return SimpleDBFilter(field: field, operation: "==", value: val.getStr(), fieldIsNumber: false)
+                return NJSDBFilter(field: field, operation: "==", value: val.getStr(), fieldIsNumber: false)
             elif val.kind == JInt or val.kind == JFloat:
-                return SimpleDBFilter(field: field, operation: "==", value: $val, fieldIsNumber: true)
+                return NJSDBFilter(field: field, operation: "==", value: $val, fieldIsNumber: true)
             elif val.kind == JBool:
                 # SQLite stores booleans as integers (1/0)
                 let boolValue = if val.getBool(): "1" else: "0"
-                return SimpleDBFilter(field: field, operation: "==", value: boolValue, fieldIsNumber: true, fieldIsBoolean: true)
+                return NJSDBFilter(field: field, operation: "==", value: boolValue, fieldIsNumber: true, fieldIsBoolean: true)
 
-            return SimpleDBFilter()
+            return NJSDBFilter()
 
         # Check for $or operator
         if "$or" in filterObj:
             let orArray = filterObj["$or"]
             if orArray.kind == JArray:
-                var orFilters: seq[SimpleDBFilter] = @[]
+                var orFilters: seq[NJSDBFilter] = @[]
                 for item in orArray:
                     if item.kind == JObject and item.len > 0:
                         # Get the first (and typically only) field from the object
@@ -227,14 +227,14 @@ class SimpleDBQuery:
                                 orFilters.add(f)
                             break
                 if orFilters.len > 0:
-                    let logicalFilter = SimpleDBLogicalFilter(op: loOr, filters: orFilters)
+                    let logicalFilter = NJSDBLogicalFilter(op: loOr, filters: orFilters)
                     this.logicalFilters.add(logicalFilter)
 
         # Check for $and operator
         if "$and" in filterObj:
             let andArray = filterObj["$and"]
             if andArray.kind == JArray:
-                var andFilters: seq[SimpleDBFilter] = @[]
+                var andFilters: seq[NJSDBFilter] = @[]
                 for item in andArray:
                     if item.kind == JObject and item.len > 0:
                         for field, val in item:
@@ -243,7 +243,7 @@ class SimpleDBQuery:
                                 andFilters.add(f)
                             break
                 if andFilters.len > 0:
-                    let logicalFilter = SimpleDBLogicalFilter(op: loAnd, filters: andFilters)
+                    let logicalFilter = NJSDBLogicalFilter(op: loAnd, filters: andFilters)
                     this.logicalFilters.add(logicalFilter)
 
         # Check for array operators and $exists in field conditions
@@ -262,7 +262,7 @@ class SimpleDBQuery:
                         var values: seq[string] = @[]
                         for v in allValues:
                             values.add(jsonToString(v))
-                        let arrayFilter = SimpleDBArrayFilter(field: field, op: aoAll, values: values)
+                        let arrayFilter = NJSDBArrayFilter(field: field, op: aoAll, values: values)
                         this.arrayFilters.add(arrayFilter)
                     processedSpecialOp = true
                 
@@ -270,7 +270,7 @@ class SimpleDBQuery:
                 if "$size" in val:
                     let sizeVal = val["$size"]
                     if sizeVal.kind == JInt:
-                        let arrayFilter = SimpleDBArrayFilter(field: field, op: aoSize, size: sizeVal.getInt())
+                        let arrayFilter = NJSDBArrayFilter(field: field, op: aoSize, size: sizeVal.getInt())
                         this.arrayFilters.add(arrayFilter)
                     processedSpecialOp = true
                 
@@ -278,7 +278,7 @@ class SimpleDBQuery:
                 if "$exists" in val:
                     let existsVal = val["$exists"]
                     if existsVal.kind == JBool:
-                        let existsFilter = SimpleDBExistsFilter(field: field, exists: existsVal.getBool())
+                        let existsFilter = NJSDBExistsFilter(field: field, exists: existsVal.getBool())
                         this.existsFilters.add(existsFilter)
                     processedSpecialOp = true
                 
@@ -286,7 +286,7 @@ class SimpleDBQuery:
                 if "$type" in val:
                     let typeVal = val["$type"]
                     if typeVal.kind == JString:
-                        let typeFilter = SimpleDBTypeFilter(field: field, jsonType: typeVal.getStr())
+                        let typeFilter = NJSDBTypeFilter(field: field, jsonType: typeVal.getStr())
                         this.typeFilters.add(typeFilter)
                     processedSpecialOp = true
                 
@@ -309,7 +309,7 @@ class SimpleDBQuery:
                                 options = optNode.getStr()
                     
                     if pattern.len > 0:
-                        let regexFilter = SimpleDBRegexFilter(field: field, pattern: pattern, options: options)
+                        let regexFilter = NJSDBRegexFilter(field: field, pattern: pattern, options: options)
                         this.regexFilters.add(regexFilter)
                     processedSpecialOp = true
                 
@@ -326,7 +326,7 @@ class SimpleDBQuery:
     
 
     ## (chainable) Set sort field
-    method sort(field: string, ascending: bool = true, isNumber: bool = true): SimpleDBQuery {.gcsafe.} =
+    method sort(field: string, ascending: bool = true, isNumber: bool = true): NJSDBQuery {.gcsafe.} =
 
         # Check input
         if field.len == 0:
@@ -340,7 +340,7 @@ class SimpleDBQuery:
     
 
     ## (chainable) Set the maximum number of documents to return, or -1 to return all documents.
-    method limit(count: int): SimpleDBQuery {.gcsafe.} =
+    method limit(count: int): NJSDBQuery {.gcsafe.} =
 
         # Check input
         if count < -1:
@@ -352,7 +352,7 @@ class SimpleDBQuery:
 
 
     ## (chainable) Set the number of documents to skip
-    method offset(count: int): SimpleDBQuery {.gcsafe.} =
+    method offset(count: int): NJSDBQuery {.gcsafe.} =
 
         # Check input
         if count < 0:
@@ -366,7 +366,7 @@ class SimpleDBQuery:
     ## (chainable) Set projection to return only specific fields.
     ## Use { "field": 1 } to include fields, { "field": 0 } to exclude fields.
     ## Cannot mix include and exclude (except _id can always be excluded).
-    method project(projectionObj: JsonNode): SimpleDBQuery {.gcsafe.} =
+    method project(projectionObj: JsonNode): NJSDBQuery {.gcsafe.} =
 
         # Check input
         if projectionObj == nil or projectionObj.kind != JObject:
@@ -395,7 +395,7 @@ class SimpleDBQuery:
 
 ##
 ## A simple NoSQL database written in Nim.
-class SimpleDB:
+class NJSDB:
 
     ## (private) Database connection
     var conn : DbConn
@@ -418,9 +418,9 @@ class SimpleDB:
     ##   filename: Path to the SQLite database file. Use ":memory:" for an in-memory database.
     ##
     ## Example:
-    ##   var db = SimpleDB()
+    ##   var db = NJSDB()
     ##   db.open("mydb.db")
-    ##   var memDb = SimpleDB()
+    ##   var memDb = NJSDB()
     ##   memDb.open(":memory:")
     method open(filename: string) {.gcsafe.} =
 
@@ -443,12 +443,12 @@ class SimpleDB:
     ##   name: The name of the collection/table
     ##
     ## Returns:
-    ##   The SimpleDB instance for method chaining
+    ##   The NJSDB instance for method chaining
     ##
     ## Example:
     ##   db.collection("users").put(%*{ "id": "user1", "name": "Alice" })
     ##   db.collection("orders").put(%*{ "id": "order1", "total": 100 })
-    method collection(name: string): SimpleDB {.gcsafe.} =
+    method collection(name: string): NJSDB {.gcsafe.} =
 
         # Update current collection
         this.currentCollection = name
@@ -474,7 +474,7 @@ class SimpleDB:
 
         # Check if collection has been selected
         if this.currentCollection.len == 0:
-            raise newException(SimpleDBError, "No collection selected. Call collection(name) first.")
+            raise newException(NJSDBError, "No collection selected. Call collection(name) first.")
 
         # Create collection table if it doesn't exist
         let createTableSql = "CREATE TABLE IF NOT EXISTS " & this.currentCollection & " (id TEXT PRIMARY KEY, _json TEXT)"
@@ -519,16 +519,16 @@ class SimpleDB:
 
 
     ## Start a query
-    method query(): SimpleDBQuery {.gcsafe.} =
+    method query(): NJSDBQuery {.gcsafe.} =
 
         # Prepare database
         this.prepareDB()
 
         # Create query object
-        let q = SimpleDBQuery.init()
-        # Allocate a stable copy of SimpleDB on the heap
+        let q = NJSDBQuery.init()
+        # Allocate a stable copy of NJSDB on the heap
         # This avoids the cast from RootRef and ensures the pointer remains valid
-        var dbCopy = cast[ptr SimpleDB](alloc0(sizeof(SimpleDB)))
+        var dbCopy = cast[ptr NJSDB](alloc0(sizeof(NJSDB)))
         dbCopy[] = this
         q.db = dbCopy
         return q
@@ -574,7 +574,7 @@ class SimpleDB:
 
 
     ## (private) Create an index for the specified query, if needed
-    method createIndex(query: SimpleDBQuery) {.gcsafe.} =
+    method createIndex(query: NJSDBQuery) {.gcsafe.} =
 
         # Stop if no index is needed, ie this query returns all data directly
         if query.sortField == "" and query.filters.len == 0:
@@ -629,7 +629,7 @@ class SimpleDB:
 
 
 ## Helper: Build SQL condition for a single filter
-proc buildFilterSql(filter: SimpleDBFilter, bindValues: var seq[string]): string =
+proc buildFilterSql(filter: NJSDBFilter, bindValues: var seq[string]): string =
     if filter.operation == "IN":
         # Handle IN operation with multiple values
         result &= "json_extract(_json, ?) IN ("
@@ -654,7 +654,7 @@ proc buildFilterSql(filter: SimpleDBFilter, bindValues: var seq[string]): string
 
 
 ## Helper: Build SQL condition for array filters
-proc buildArrayFilterSql(arrayFilter: SimpleDBArrayFilter, bindValues: var seq[string]): string =
+proc buildArrayFilterSql(arrayFilter: NJSDBArrayFilter, bindValues: var seq[string]): string =
     case arrayFilter.op:
         of aoAll:
             # $all - Array contains all specified values
@@ -679,7 +679,7 @@ proc buildArrayFilterSql(arrayFilter: SimpleDBArrayFilter, bindValues: var seq[s
 
 
 ## Helper: Build SQL condition for exists filters
-proc buildExistsFilterSql(existsFilter: SimpleDBExistsFilter, bindValues: var seq[string]): string =
+proc buildExistsFilterSql(existsFilter: NJSDBExistsFilter, bindValues: var seq[string]): string =
     # Note: SQLite's json_extract returns NULL for both non-existent fields AND null values
     # So $exists: true matches fields with non-null values
     # And $exists: false matches non-existent fields OR null values
@@ -707,7 +707,7 @@ proc toJsonTypeName(mongoType: string): seq[string] =
 
 
 ## Helper: Build SQL condition for type filters
-proc buildTypeFilterSql(typeFilter: SimpleDBTypeFilter, bindValues: var seq[string]): string =
+proc buildTypeFilterSql(typeFilter: NJSDBTypeFilter, bindValues: var seq[string]): string =
     let sqliteTypes = toJsonTypeName(typeFilter.jsonType)
     if sqliteTypes.len == 0:
         return "1=1"  # Invalid type, match everything
@@ -765,7 +765,7 @@ proc regexToLikePattern(regexPattern: string): string =
 
 
 ## Helper: Build SQL condition for regex filters
-proc buildRegexFilterSql(regexFilter: SimpleDBRegexFilter, bindValues: var seq[string]): string =
+proc buildRegexFilterSql(regexFilter: NJSDBRegexFilter, bindValues: var seq[string]): string =
     # Use LIKE for basic regex support (case-insensitive with options="i")
     # GLOB is case-sensitive by default, LIKE is case-insensitive by default in SQLite
     # We use LIKE for case-insensitive, GLOB for case-sensitive
@@ -787,10 +787,10 @@ proc buildRegexFilterSql(regexFilter: SimpleDBRegexFilter, bindValues: var seq[s
 
 
 ## Execute the query and return all documents.
-proc prepareQuerySql(this: SimpleDBQuery, sqlPrefix: string): (string, seq[string]) =
+proc prepareQuerySql(this: NJSDBQuery, sqlPrefix: string): (string, seq[string]) =
 
     # Get database reference
-    let db = cast[ptr SimpleDB](this.db)[]
+    let db = cast[ptr NJSDB](this.db)[]
     
     # Build query
     var bindValues : seq[string]
@@ -946,7 +946,7 @@ proc applyProjection(doc: JsonNode, projection: JsonNode, includeMode: bool): Js
 
 
 ## Helper: Check if projection has nested fields (contains dots)
-proc hasNestedFields(this: SimpleDBQuery): bool =
+proc hasNestedFields(this: NJSDBQuery): bool =
     if this.projection == nil:
         return false
     for field, val in this.projection:
@@ -956,7 +956,7 @@ proc hasNestedFields(this: SimpleDBQuery): bool =
 
 
 ## Helper: Build SQL SELECT clause for projection
-proc buildProjectionSql(this: SimpleDBQuery, collection: string): string =
+proc buildProjectionSql(this: NJSDBQuery, collection: string): string =
     ## Builds SQL SELECT clause using json_extract for include projections
     ## Returns "SELECT _json" if no projection, exclude mode, or nested fields
     ## Returns "SELECT json_object(...)" for flat include mode projections
@@ -985,13 +985,13 @@ proc buildProjectionSql(this: SimpleDBQuery, collection: string): string =
 
 
 ## Execute the query and return all documents.
-proc list*(this: SimpleDBQuery): seq[JsonNode] =
+proc list*(this: NJSDBQuery): seq[JsonNode] =
     ## Returns all documents matching the query
     ## 
     ## Example:
     ##   let docs = db.query().where("status", "==", "active").list()
     
-    let db = cast[ptr SimpleDB](this.db)[]
+    let db = cast[ptr NJSDB](this.db)[]
     
     # Build SELECT clause based on projection
     let selectPrefix = this.buildProjectionSql(db.currentCollection)
@@ -1008,10 +1008,10 @@ proc list*(this: SimpleDBQuery): seq[JsonNode] =
 
 
 ## Execute the query and iterate through the resulting documents.
-iterator list*(this: SimpleDBQuery): JsonNode =
+iterator list*(this: NJSDBQuery): JsonNode =
 
     # Get database reference
-    let db = cast[ptr SimpleDB](this.db)[]
+    let db = cast[ptr NJSDB](this.db)[]
 
     # Build SELECT clause based on projection
     let selectPrefix = this.buildProjectionSql(db.currentCollection)
@@ -1035,10 +1035,10 @@ iterator list*(this: SimpleDBQuery): JsonNode =
 
 ## Execute the query and return the query plan for analysis.
 ## Returns a sequence of JsonNode with query plan details.
-proc explain*(this: SimpleDBQuery): seq[JsonNode] =
+proc explain*(this: NJSDBQuery): seq[JsonNode] =
 
     # Get database reference
-    let db = cast[ptr SimpleDB](this.db)[]
+    let db = cast[ptr NJSDB](this.db)[]
 
     # Prepare the query SQL (but we don't need bind values for EXPLAIN)
     let selectPrefix = "SELECT _json FROM " & db.currentCollection
@@ -1060,10 +1060,10 @@ proc explain*(this: SimpleDBQuery): seq[JsonNode] =
 
 
 ## Execute the query and return the count of matching documents.
-proc count*(this: SimpleDBQuery): int {.discardable.} =
+proc count*(this: NJSDBQuery): int {.discardable.} =
 
     # Get database reference
-    let db = cast[ptr SimpleDB](this.db)[]
+    let db = cast[ptr NJSDB](this.db)[]
 
     # Prepare the query
     let countPrefix = "SELECT COUNT(*) FROM " & db.currentCollection
@@ -1078,10 +1078,10 @@ proc count*(this: SimpleDBQuery): int {.discardable.} =
 
 
 ## Execute the query and return distinct values for a field using SQL DISTINCT.
-proc distinctValues*(this: SimpleDBQuery, field: string): seq[string] {.gcsafe.} =
+proc distinctValues*(this: NJSDBQuery, field: string): seq[string] {.gcsafe.} =
 
     # Get database reference
-    let db = cast[ptr SimpleDB](this.db)[]
+    let db = cast[ptr NJSDB](this.db)[]
 
     # Build SQL for distinct values using json_extract
     # Note: We need to handle the query filters but select distinct values
@@ -1104,10 +1104,10 @@ proc distinctValues*(this: SimpleDBQuery, field: string): seq[string] {.gcsafe.}
 
 
 ## Remove the documents matched by this query.
-proc remove*(this: SimpleDBQuery): int {.discardable.} =
+proc remove*(this: NJSDBQuery): int {.discardable.} =
 
     # Get database reference
-    let db = cast[ptr SimpleDB](this.db)[]
+    let db = cast[ptr NJSDB](this.db)[]
 
     # Prepare the query
     let deletePrefix = "DELETE FROM " & db.currentCollection
@@ -1118,7 +1118,7 @@ proc remove*(this: SimpleDBQuery): int {.discardable.} =
 
 
 ## Execute the query and return the first document found, or null if not found.
-proc get*(this: SimpleDBQuery): JsonNode =
+proc get*(this: NJSDBQuery): JsonNode =
 
     # Limit to one
     this.pLimit = 1
@@ -1132,12 +1132,12 @@ proc get*(this: SimpleDBQuery): JsonNode =
 
 
 ## Helper: Get a document with the specified ID, or return nil if not found
-proc get*(this: SimpleDB, id: string): JsonNode =
+proc get*(this: NJSDB, id: string): JsonNode =
     return this.query().where("id", "==", id).get()
 
 
 ## Helper: Remove a document with the specified ID. Returns true if a document was removed.
-proc removeOne*(this: SimpleDB, id: string): bool =
+proc removeOne*(this: NJSDB, id: string): bool =
     return this.query().where("id", "==", id).limit(1).remove() > 0
 
 
@@ -1146,7 +1146,7 @@ proc removeOne*(this: SimpleDB, id: string): bool =
 ##   $set: {"$set": {"field": value}} - Set field to value
 ##   $inc: {"$inc": {"field": value}} - Increment field by value (default 0 if not exists)
 ##   $mul: {"$mul": {"field": value}} - Multiply field by value (default 0 if not exists)
-proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
+proc update*(this: NJSDBQuery, updates: JsonNode): int {.discardable.} =
 
     # Check input
     if updates == nil:
@@ -1156,7 +1156,7 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
     if updates.len == 0: return 0
 
     # Get database reference
-    let db = cast[ptr SimpleDB](this.db)[]
+    let db = cast[ptr NJSDB](this.db)[]
 
     # Collect all json_set operations and their bind parameters
     var jsonSetPaths: seq[string] = @[]
@@ -1308,12 +1308,12 @@ proc update*(this: SimpleDBQuery, updates: JsonNode): int {.discardable.} =
 
 
 ## Helper: Update a document with the specified ID. Returns true if a document was updated.
-proc updateOne*(this: SimpleDB, id: string, updates: JsonNode): bool =
+proc updateOne*(this: NJSDB, id: string, updates: JsonNode): bool =
     return this.query().where("id", "==", id).limit(1).update(updates) > 0
 
 ## Aggregate documents by a field and count them using SQL GROUP BY
 ## Returns a sequence of JsonNode with {"_id": fieldValue, "count": count}
-proc aggregateCount*(this: SimpleDB, collection: string, groupField: string, matchFilter: JsonNode = nil): seq[JsonNode] {.gcsafe.} =
+proc aggregateCount*(this: NJSDB, collection: string, groupField: string, matchFilter: JsonNode = nil): seq[JsonNode] {.gcsafe.} =
     # Prepare database
     this.prepareDB()
     
@@ -1360,7 +1360,7 @@ type AggregateResult* = object
 ## Extended aggregation with multiple operators
 ## Supports: $sum, $avg, $min, $max, $count
 ## Example: aggregate("category", "amount", %*{ "$sum": "amount", "$avg": "amount" })
-proc aggregate*(this: SimpleDB, groupField: string, aggregations: JsonNode, matchFilter: JsonNode = nil): seq[AggregateResult] {.gcsafe.} =
+proc aggregate*(this: NJSDB, groupField: string, aggregations: JsonNode, matchFilter: JsonNode = nil): seq[AggregateResult] {.gcsafe.} =
     ## Performs aggregation with multiple operators
     ## groupField: Field to group by
     ## aggregations: Json object with aggregation operators
@@ -1467,7 +1467,7 @@ proc aggregate*(this: SimpleDB, groupField: string, aggregations: JsonNode, matc
 
 
 ## Put a new document into the database, or replace it if it already exists
-proc writeDocument(this: SimpleDB, document: JsonNode) =
+proc writeDocument(this: NJSDB, document: JsonNode) =
 
     # Check input
     if document == nil:
@@ -1508,7 +1508,7 @@ proc writeDocument(this: SimpleDB, document: JsonNode) =
 
 
 ## Put a new document into the database, merging the fields if it already exists
-proc put*(this: SimpleDB, document: JsonNode, merge: bool = false) =
+proc put*(this: NJSDB, document: JsonNode, merge: bool = false) =
 
     # If not merging, just write it and return
     if not merge:
@@ -1543,7 +1543,7 @@ proc put*(this: SimpleDB, document: JsonNode, merge: bool = false) =
 
 ## Upsert a document: Update if it exists, insert if it doesn't.
 ## Returns the number of documents affected (always 1).
-proc upsert*(this: SimpleDB, document: JsonNode): int {.discardable.} =
+proc upsert*(this: NJSDB, document: JsonNode): int {.discardable.} =
 
     # Check input
     if document == nil:
@@ -1576,7 +1576,7 @@ proc upsert*(this: SimpleDB, document: JsonNode): int {.discardable.} =
 
 ## Upsert with merge: Update by merging fields if it exists, insert if it doesn't.
 ## Returns the number of documents affected (always 1).
-proc upsert*(this: SimpleDB, document: JsonNode, merge: bool): int {.discardable.} =
+proc upsert*(this: NJSDB, document: JsonNode, merge: bool): int {.discardable.} =
 
     # If not merging, use the simple upsert
     if not merge:
@@ -1614,7 +1614,7 @@ proc upsert*(this: SimpleDB, document: JsonNode, merge: bool): int {.discardable
 
 ## Bulk insert multiple documents efficiently
 ## Returns the number of documents inserted
-proc bulkInsert*(this: SimpleDB, documents: seq[JsonNode]): int {.discardable.} =
+proc bulkInsert*(this: NJSDB, documents: seq[JsonNode]): int {.discardable.} =
     ## Efficiently inserts multiple documents in a single transaction
     ## Much faster than individual put() calls for large datasets
     
@@ -1631,7 +1631,7 @@ proc bulkInsert*(this: SimpleDB, documents: seq[JsonNode]): int {.discardable.} 
 
 ## Bulk delete multiple documents by ID
 ## Returns the number of documents deleted
-proc bulkDelete*(this: SimpleDB, ids: seq[string]): int {.discardable.} =
+proc bulkDelete*(this: NJSDB, ids: seq[string]): int {.discardable.} =
     ## Efficiently deletes multiple documents by ID in a single transaction
     
     if ids.len == 0:
@@ -1668,7 +1668,7 @@ type AggregatePipelineResult* = object
 ##     %*{ "$sort": { "total": -1 } },
 ##     %*{ "$limit": 10 }
 ##   ])
-proc aggregate*(this: SimpleDB, pipeline: seq[JsonNode]): AggregatePipelineResult {.gcsafe.} =
+proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {.gcsafe.} =
     ## Executes an aggregation pipeline
     ## Returns aggregated results as JsonNode sequence
     

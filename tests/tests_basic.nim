@@ -1,10 +1,10 @@
 import std/[unittest, json, os]
-import simpledb
+import njsdb
 
-suite "SimpleDB Basic Operations":
+suite "NJSDB Basic Operations":
 
     test "Create in-memory database":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -15,7 +15,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Put and get document":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -29,7 +29,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Put and get multiple documents":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -49,7 +49,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Update document with merge":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -66,7 +66,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Remove document":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -85,7 +85,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Query with where clause":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -107,7 +107,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Query with sort":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -129,7 +129,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Query with limit and offset":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -157,7 +157,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Query with count":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -175,7 +175,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Query with filter":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -199,7 +199,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Query with $in operator":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -219,7 +219,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Query with boolean filter":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -242,7 +242,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Update with $set":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -269,7 +269,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Auto-generated ID":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -290,7 +290,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Distinct values":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -307,7 +307,7 @@ suite "SimpleDB Basic Operations":
         db.close()
 
     test "Iterator":
-        var db = SimpleDB()
+        var db = NJSDB()
         db.open(":memory:")
         discard db.collection("documents")
 
@@ -327,18 +327,18 @@ suite "SimpleDB Basic Operations":
         db.close()
 
 
-suite "SimpleDB Collections":
-  var db: SimpleDB
+suite "NJSDB Collections":
+  var db: NJSDB
 
   setup:
-    db = SimpleDB()
+    db = NJSDB()
     db.open(":memory:")
 
   teardown:
     db.close()
 
   test "Must call collection() before operations":
-    expect SimpleDBError:
+    expect NJSDBError:
       db.put(%*{ "id": "doc1", "name": "Test" })
 
   test "Switch between collections":
@@ -356,7 +356,7 @@ suite "SimpleDB Collections":
 
   test "Collection method chaining":
     let result = db.collection("products")
-    check result is SimpleDB
+    check result is NJSDB
 
   test "Query across different collections":
     db.collection("active").put(%*{ "id": "doc1", "status": "active" })
