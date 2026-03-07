@@ -292,11 +292,11 @@ db.put(doc, ttl = 3600)  # seconds
 db.cleanupExpired()
 ```
 
-#### 7. Cursor-Based Pagination
-More efficient for large datasets.
+#### 7. Cursor-Based Pagination ⚠️ Partially Implemented
+Can be achieved with existing query methods, but no dedicated cursor API.
 
 ```nim
-# Instead of offset (slow for large datasets)
+# Current workaround using where() + sort() + limit()
 let page1 = db.query()
   .where("createdAt", ">", lastTimestamp)
   .sort("createdAt", ascending = true)
@@ -311,6 +311,11 @@ let page2 = db.query()
   .limit(100)
   .list()
 ```
+
+**What's Missing:**
+- Dedicated cursor object with `hasNext()`, `next()` methods
+- Automatic cursor state management
+- Cursor-based stream/lazy loading API
 
 ---
 
@@ -392,7 +397,7 @@ let page2 = db.query()
 | Full-Text Search | Medium | Medium | ⚠️ FTS5 extension | ❌ Not implemented |
 | Geospatial | Low | High | ⚠️ R*Tree extension | ❌ Not implemented |
 | TTL | Low | Medium | ✅ User-space | ❌ Not implemented |
-| Cursor Pagination | Medium | Low | ✅ Indexed queries | ❌ Not implemented |
+| Cursor Pagination | Medium | Low | ✅ Indexed queries | ⚠️ Partially implemented (workaround available) |
 
 ---
 
