@@ -383,16 +383,16 @@ let page2 = db.query()
 
 ## Implementation Priority Matrix
 
-| Feature | User Impact | Implementation Complexity | SQLite Support |
-|---------|-------------|--------------------------|----------------|
-| $regex | Medium | Low | ⚠️ Needs extension |
-| Array Updates | Medium | High | ⚠️ Complex JSON manipulation |
-| Aggregation $lookup | High | High | ⚠️ Requires JOIN logic |
-| Aggregation $unwind | Medium | Medium | ⚠️ Complex transformation |
-| Full-Text Search | Medium | Medium | ⚠️ FTS5 extension |
-| Geospatial | Low | High | ⚠️ R*Tree extension |
-| TTL | Low | Medium | ✅ User-space |
-| Cursor Pagination | Medium | Low | ✅ Indexed queries |
+| Feature | User Impact | Implementation Complexity | SQLite Support | Status |
+|---------|-------------|--------------------------|----------------|--------|
+| $regex | Medium | Low | ⚠️ Needs extension | ❌ Not implemented |
+| Array Updates ($push, $pull, etc) | Medium | High | ⚠️ Complex JSON manipulation | ❌ Not implemented |
+| Aggregation $lookup | High | High | ⚠️ Requires JOIN logic | ❌ Not implemented |
+| Aggregation $unwind | Medium | Medium | ⚠️ Complex transformation | ❌ Not implemented |
+| Full-Text Search | Medium | Medium | ⚠️ FTS5 extension | ❌ Not implemented |
+| Geospatial | Low | High | ⚠️ R*Tree extension | ❌ Not implemented |
+| TTL | Low | Medium | ✅ User-space | ❌ Not implemented |
+| Cursor Pagination | Medium | Low | ✅ Indexed queries | ❌ Not implemented |
 
 ---
 
