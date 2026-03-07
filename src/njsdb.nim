@@ -35,7 +35,7 @@ type FilterOp = enum
     foEq, foNe, foGt, foGte, foLt, foLte, foIn
 
 type LogicalOp = enum
-    loAnd, loOr
+    loAnd, loOr, loNor
 
 type ArrayOp = enum
     aoAll, aoElemMatch, aoSize
@@ -49,12 +49,18 @@ class NJSDBFilter:
     var values: seq[string] = @[]  # For IN operations
     var fieldIsNumber = false
     var fieldIsBoolean = false  # For boolean comparisons
+    var negate = false  # For $not operator (negate this filter)
 
 ##
 ## Logical filter group for $and/$or operations
 class NJSDBLogicalFilter:
     var op: LogicalOp
     var filters: seq[NJSDBFilter]
+
+##
+## Not filter for $not operator
+class NJSDBNotFilter:
+    var filter: NJSDBFilter
 
 ##
 ## Array filter for array operations ($all, $size)
@@ -108,6 +114,9 @@ class NJSDBQuery:
 
     ## List of logical filter groups ($and, $or)
     var logicalFilters: seq[NJSDBLogicalFilter]
+
+    ## List of not filters ($not)
+    var notFilters: seq[NJSDBNotFilter]
 
     ## List of array filters ($all, $size)
     var arrayFilters: seq[NJSDBArrayFilter]
@@ -175,9 +184,22 @@ class NJSDBQuery:
                     let inValues = val["$in"]
                     if inValues.kind == JArray and inValues.len > 0:
                         var values: seq[string] = @[]
+                        var isNum = false
                         for v in inValues:
                             values.add(jsonToString(v))
-                        return NJSDBFilter(field: field, operation: "IN", values: values, fieldIsNumber: false)
+                            if v.kind == JInt or v.kind == JFloat:
+                                isNum = true
+                        return NJSDBFilter(field: field, operation: "IN", values: values, fieldIsNumber: isNum)
+                elif "$nin" in val:
+                    let ninValues = val["$nin"]
+                    if ninValues.kind == JArray and ninValues.len > 0:
+                        var values: seq[string] = @[]
+                        var isNum = false
+                        for v in ninValues:
+                            values.add(jsonToString(v))
+                            if v.kind == JInt or v.kind == JFloat:
+                                isNum = true
+                        return NJSDBFilter(field: field, operation: "NOT IN", values: values, fieldIsNumber: isNum)
                 elif "$eq" in val:
                     let eqVal = val["$eq"]
                     let isNum = eqVal.kind == JInt or eqVal.kind == JFloat
@@ -202,6 +224,27 @@ class NJSDBQuery:
                     let lteVal = val["$lte"]
                     let isNum = lteVal.kind == JInt or lteVal.kind == JFloat
                     return NJSDBFilter(field: field, operation: "<=", value: jsonToString(lteVal), fieldIsNumber: isNum)
+                elif "$not" in val:
+                    # $not operator - negate the inner condition
+                    let notVal = val["$not"]
+                    if notVal.kind == JObject:
+                        # Process the inner condition and negate it
+                        var innerFilter = processCondition(field, notVal)
+                        if innerFilter.field.len > 0:
+                            innerFilter.negate = true
+                            return innerFilter
+                    elif notVal.kind == JBool:
+                        # $not: true means field should not exist or be false
+                        # $not: false means field should exist and be true
+                        let boolValue = if notVal.getBool(): "0" else: "1"
+                        return NJSDBFilter(field: field, operation: "==", value: boolValue, fieldIsNumber: true, fieldIsBoolean: true, negate: true)
+                    elif notVal.kind == JNull:
+                        # $not: null means field should exist and not be null
+                        return NJSDBFilter(field: field, operation: "IS NOT NULL", value: "", fieldIsNumber: false, negate: false)
+                    else:
+                        # $not: value means field != value
+                        let isNum = notVal.kind == JInt or notVal.kind == JFloat
+                        return NJSDBFilter(field: field, operation: "!=", value: jsonToString(notVal), fieldIsNumber: isNum)
             elif val.kind == JString:
                 return NJSDBFilter(field: field, operation: "==", value: val.getStr(), fieldIsNumber: false)
             elif val.kind == JInt or val.kind == JFloat:
@@ -246,9 +289,30 @@ class NJSDBQuery:
                     let logicalFilter = NJSDBLogicalFilter(op: loAnd, filters: andFilters)
                     this.logicalFilters.add(logicalFilter)
 
+        # Check for $nor operator
+        if "$nor" in filterObj:
+            let norArray = filterObj["$nor"]
+            if norArray.kind == JArray:
+                var norFilters: seq[NJSDBFilter] = @[]
+                for item in norArray:
+                    if item.kind == JObject and item.len > 0:
+                        for field, val in item:
+                            let f = processCondition(field, val)
+                            if f.field.len > 0:
+                                norFilters.add(f)
+                            break
+                if norFilters.len > 0:
+                    # $nor is equivalent to NOT ($or(...))
+                    let logicalFilter = NJSDBLogicalFilter(op: loNor, filters: norFilters)
+                    this.logicalFilters.add(logicalFilter)
+
+        # Check for $not operator (field-level negation)
+        # $not can be used like: { field: { $not: { $gt: 5 } } }
+        # or: { field: { $not: { $in: [1, 2, 3] } } }
+
         # Check for array operators and $exists in field conditions
         for field, val in filterObj:
-            if field == "$or" or field == "$and":
+            if field == "$or" or field == "$and" or field == "$nor":
                 continue
             
             # Check for array operators and $exists
@@ -632,15 +696,46 @@ class NJSDB:
 proc buildFilterSql(filter: NJSDBFilter, bindValues: var seq[string]): string =
     if filter.operation == "IN":
         # Handle IN operation with multiple values
-        result &= "json_extract(_json, ?) IN ("
+        if filter.negate:
+            result &= "NOT ("
+        # For numeric fields, cast json_extract result to REAL
+        if filter.fieldIsNumber:
+            result &= "CAST(json_extract(_json, ?) AS REAL) IN ("
+        else:
+            result &= "json_extract(_json, ?) IN ("
         bindValues.add(filter.field.toJsonPath())
         for i in 0 ..< filter.values.len:
             if i > 0: result &= ", "
             result &= "?"
             bindValues.add(filter.values[i])
         result &= ")"
+        if filter.negate:
+            result &= ")"
+    elif filter.operation == "NOT IN":
+        # Handle NOT IN operation with multiple values
+        if filter.negate:
+            result &= "NOT ("
+        # For numeric fields, cast json_extract result to REAL
+        if filter.fieldIsNumber:
+            result &= "CAST(json_extract(_json, ?) AS REAL) NOT IN ("
+        else:
+            result &= "json_extract(_json, ?) NOT IN ("
+        bindValues.add(filter.field.toJsonPath())
+        for i in 0 ..< filter.values.len:
+            if i > 0: result &= ", "
+            result &= "?"
+            bindValues.add(filter.values[i])
+        result &= ")"
+        if filter.negate:
+            result &= ")"
+    elif filter.operation == "IS NOT NULL":
+        # Handle IS NOT NULL (for $not: null)
+        result &= "json_extract(_json, ?) IS NOT NULL"
+        bindValues.add(filter.field.toJsonPath())
     else:
         # For numeric comparisons, cast json_extract result to REAL
+        if filter.negate:
+            result &= "NOT ("
         if filter.fieldIsNumber:
             result &= "CAST(json_extract(_json, ?) AS REAL) " & filter.operation & " CAST(? AS REAL)"
         elif filter.fieldIsBoolean:
@@ -651,6 +746,8 @@ proc buildFilterSql(filter: NJSDBFilter, bindValues: var seq[string]): string =
             result &= "json_extract(_json, ?) " & filter.operation & " ?"
         bindValues.add(filter.field.toJsonPath())
         bindValues.add(filter.value)
+        if filter.negate:
+            result &= ")"
 
 
 ## Helper: Build SQL condition for array filters
@@ -815,19 +912,29 @@ proc prepareQuerySql(this: NJSDBQuery, sqlPrefix: string): (string, seq[string])
             # Add the filter
             sqlStr &= buildFilterSql(filter, bindValues)
 
-        # Add logical filters ($or, $and)
+        # Add logical filters ($or, $and, $nor)
         for logicalFilter in this.logicalFilters:
             if addedFirst: sqlStr &= " AND "
             addedFirst = true
 
-            let logicalOp = if logicalFilter.op == loOr: " OR " else: " AND "
-            sqlStr &= "("
-            var firstInGroup = true
-            for filter in logicalFilter.filters:
-                if not firstInGroup: sqlStr &= logicalOp
-                firstInGroup = false
-                sqlStr &= buildFilterSql(filter, bindValues)
-            sqlStr &= ")"
+            if logicalFilter.op == loNor:
+                # $nor is NOT ($or(...))
+                sqlStr &= "NOT ("
+                var firstInGroup = true
+                for filter in logicalFilter.filters:
+                    if not firstInGroup: sqlStr &= " OR "
+                    firstInGroup = false
+                    sqlStr &= buildFilterSql(filter, bindValues)
+                sqlStr &= ")"
+            else:
+                let logicalOp = if logicalFilter.op == loOr: " OR " else: " AND "
+                sqlStr &= "("
+                var firstInGroup = true
+                for filter in logicalFilter.filters:
+                    if not firstInGroup: sqlStr &= logicalOp
+                    firstInGroup = false
+                    sqlStr &= buildFilterSql(filter, bindValues)
+                sqlStr &= ")"
 
         # Add array filters ($all, $size)
         for arrayFilter in this.arrayFilters:

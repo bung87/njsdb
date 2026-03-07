@@ -218,6 +218,90 @@ suite "NJSDB Basic Operations":
 
         db.close()
 
+    test "Query with $nin operator":
+        var db = NJSDB()
+        db.open(":memory:")
+        discard db.collection("documents")
+
+        for i in 1..10:
+            var doc = %*{
+                "id": "doc" & $i,
+                "type": "type" & $(i mod 3)
+            }
+            db.put(doc)
+
+        var filter = %*{
+            "type": { "$nin": ["type0", "type1"] }
+        }
+        var results = db.query().filter(filter).list()
+        check results.len == 3  # Only type2 documents
+
+        db.close()
+
+    test "Query with $not operator":
+        var db = NJSDB()
+        db.open(":memory:")
+        discard db.collection("documents")
+
+        for i in 1..10:
+            var doc = %*{
+                "id": "doc" & $i,
+                "value": i
+            }
+            db.put(doc)
+
+        # Test $not with comparison - $not { $gt: 5 } means value <= 5
+        var filter = %*{
+            "value": { "$not": { "$gt": 5 } }
+        }
+        var results = db.query().filter(filter).list()
+        check results.len == 5  # values 1-5
+
+        # Test $not with $in - $not { $in: [1,2,3] } means value not in [1,2,3]
+        filter = %*{
+            "value": { "$not": { "$in": [1, 2, 3] } }
+        }
+        results = db.query().filter(filter).list()
+        check results.len == 7  # values 4-10
+
+        # Test simple $not with value - $not: 5 means value != 5
+        filter = %*{
+            "value": { "$not": 5 }
+        }
+        results = db.query().filter(filter).list()
+        check results.len == 9  # all except value 5
+
+        db.close()
+
+    test "Query with $nor operator":
+        var db = NJSDB()
+        db.open(":memory:")
+        discard db.collection("documents")
+
+        for i in 1..10:
+            var doc = %*{
+                "id": "doc" & $i,
+                "type": "type" & $(i mod 3),
+                "value": i
+            }
+            db.put(doc)
+
+        # $nor: NOT (condition1 OR condition2)
+        var filter = %*{
+            "$nor": [
+                { "type": "type0" },
+                { "value": { "$gt": 7 } }
+            ]
+        }
+        var results = db.query().filter(filter).list()
+        # type0: docs 3, 6, 9
+        # value>7: docs 8, 9, 10
+        # $nor excludes union of these: docs 3, 6, 8, 9, 10
+        # Remaining: docs 1, 2, 4, 5, 7 (5 documents)
+        check results.len == 5
+
+        db.close()
+
     test "Query with boolean filter":
         var db = NJSDB()
         db.open(":memory:")

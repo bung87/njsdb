@@ -358,7 +358,7 @@ let page2 = db.query()
 | `$lt` | ✅ Implemented | Less than |
 | `$lte` | ✅ Implemented | Less than or equal |
 | `$in` | ✅ Implemented | In array |
-| `$nin` | ❌ Not implemented | Not in array |
+| `$nin` | ✅ Implemented | Not in array |
 | `$exists` | ✅ Implemented | Field exists |
 | `$type` | ✅ Implemented | Type check |
 | `$regex` | ❌ Not implemented | Pattern matching |
@@ -366,8 +366,8 @@ let page2 = db.query()
 | `$size` | ✅ Implemented | Array size |
 | `$or` | ✅ Implemented | Logical OR |
 | `$and` | ✅ Implemented | Logical AND |
-| `$not` | ❌ Not implemented | Logical NOT |
-| `$nor` | ❌ Not implemented | Logical NOR |
+| `$not` | ✅ Implemented | Logical NOT |
+| `$nor` | ✅ Implemented | Logical NOR |
 
 ### 📊 Update Operators Status
 
