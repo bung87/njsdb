@@ -573,6 +573,55 @@ except NJSDBError:
 | `explain()` | Get query plan |
 | `distinctValues(field)` | Get unique values |
 
+## Multi-threading
+
+NJSDB supports multi-threading. Each thread should create its own `NJSDB` instance with its own database connection. See the `examples/` directory for complete examples.
+
+### Basic Multi-threading Pattern
+
+```nim
+import std/[os, json, times]
+import njsdb
+
+# Each thread creates its own database connection
+proc workerThread(threadId: int) {.thread.} =
+    var db = NJSDB()
+    db.open("database.db")
+    db.collection("documents")
+
+    # Insert documents
+    for i in 0..<100:
+        db.put(%*{
+            "id": "thread" & $threadId & "_doc" & $i,
+            "threadId": threadId,
+            "sequence": i
+        })
+
+    # Query documents
+    let results = db.query()
+        .where("threadId", "==", threadId)
+        .list()
+
+    echo "Thread ", threadId, " processed ", results.len, " documents"
+    db.close()
+
+# Main thread
+var threads: array[4, Thread[int]]
+for i in 0..<4:
+    createThread(threads[i], workerThread, i)
+
+for i in 0..<4:
+    joinThread(threads[i])
+```
+
+### Key Points
+
+- **Each thread needs its own connection**: Create a separate `NJSDB` instance in each thread
+- **SQLite handles concurrency**: Multiple threads can read concurrently, writes are serialized
+- **Use transactions for batch operations**: Wrap multiple operations in `withTransaction()` for atomicity
+- **Thread pool pattern**: Use a work queue with multiple worker threads for high-throughput scenarios
+
+See `examples/multithread_example.nim` and `examples/multithread_shared_example.nim` for complete working examples.
 
 ## License
 
