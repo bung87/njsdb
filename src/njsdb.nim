@@ -1418,42 +1418,6 @@ proc update*(this: NJSDBQuery, updates: JsonNode): int {.discardable.} =
 proc updateOne*(this: NJSDB, id: string, updates: JsonNode): bool =
     return this.query().where("id", "==", id).limit(1).update(updates) > 0
 
-## Aggregate documents by a field and count them using SQL GROUP BY
-## Returns a sequence of JsonNode with {"_id": fieldValue, "count": count}
-proc aggregateCount*(this: NJSDB, collection: string, groupField: string, matchFilter: JsonNode = nil): seq[JsonNode] {.gcsafe.} =
-    # Prepare database
-    this.prepareDB()
-    
-    # Build base query
-    var query = this.query()
-    
-    # Apply additional filters if provided
-    if matchFilter != nil and matchFilter.len > 0:
-        query = query.filter(matchFilter)
-    
-    # Get the WHERE clause SQL
-    let (whereSql, bindValues) = prepareQuerySql(query, "")
-    
-    # Build aggregate SQL using json_extract for GROUP BY
-    var sqlStr = "SELECT json_extract(_json, '$.' || ?), COUNT(*) FROM " & this.currentCollection
-    var allBindValues = @[groupField]
-    
-    # Add WHERE clause if there are filters
-    if whereSql.len > 0:
-        sqlStr &= whereSql
-        allBindValues.add(bindValues)
-    
-    # Add GROUP BY
-    sqlStr &= " GROUP BY json_extract(_json, '$.' || ?)"
-    allBindValues.add(groupField)
-    
-    # Execute query
-    result = @[]
-    for row in this.conn.rows(sql(sqlStr), allBindValues):
-        if row[0].len > 0:
-            result.add(%*{"id": row[0], "count": parseInt(row[1])})
-
-
 ## Aggregation result type
 type AggregateResult* = object
     groupId*: string

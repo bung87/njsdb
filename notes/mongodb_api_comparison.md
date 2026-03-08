@@ -31,15 +31,14 @@
 | `query().limit(n)` | `find().limit(n)` | 限制数量 |
 | `query().skip(n)` | `find().skip(n)` | 跳过文档 |
 | `query().distinctValues(field)` | `distinct(field)` | 去重值 |
-| `query().delete()` | `deleteMany(filter)` | 删除多个 |
-| `query().update(updates)` | `updateMany(filter, updates)` | 更新多个 |
 
 ## 批量操作
 
 | NJSDB | MongoDB | 说明 |
 |----------|---------|------|
 | `insertMany(docs)` | `insertMany(docs)` | 批量插入 |
-| `batch(proc)` + `delete(id)` | `deleteMany({_id: {$in: ids}})` | 批量删除 |
+| `query().delete()` | `deleteMany(filter)` | 条件删除多个 |
+| `query().update(updates)` | `updateMany(filter, updates)` | 条件更新多个 |
 | `batch(proc)` | `withTransaction()` | 事务批处理 |
 
 ## 聚合操作
@@ -48,7 +47,28 @@
 |----------|---------|------|
 | `aggregate(pipeline)` | `aggregate(pipeline)` | 聚合管道 |
 | `aggregate(groupField, ops)` | `aggregate([{$group}])` | 简化聚合 |
-| `aggregateCount(coll, field)` | `aggregate([{$match}, {$group}, {$count}])` | 分组计数 |
+
+### 聚合示例
+
+```nim
+# 分组计数（替代 aggregateCount）
+db.collection("orders").aggregate(@[
+  %*{ "$group": {
+    "_id": "$status",
+    "count": { "$sum": 1 }
+  }}
+])
+
+# 带过滤的分组计数
+db.collection("orders").aggregate(@[
+  %*{ "$match": { "amount": { "$gt": 100 } } },
+  %*{ "$group": {
+    "_id": "$status",
+    "count": { "$sum": 1 },
+    "total": { "$sum": "$amount" }
+  }}
+])
+```
 
 ### 支持的聚合阶段
 
