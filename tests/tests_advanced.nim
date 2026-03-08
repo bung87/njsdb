@@ -457,17 +457,25 @@ suite "NJSDB Bulk Operations":
       %*{ "id": "bulk-3", "name": "Item 3", "value": 30 }
     ]
 
-    let inserted = db.bulkInsert(docs)
+    let inserted = db.insertMany(docs)
     check inserted == 3
     check db.query().count() == 3
 
-  test "Bulk delete documents":
+  test "Batch delete documents":
     for i in 1..10:
       db.put(%*{ "id": "del-" & $i, "name": "Item " & $i })
 
+    # Use batch + delete for bulk deletion
     let idsToDelete = @["del-2", "del-4", "del-6", "del-8", "del-10"]
-    let deleted = db.bulkDelete(idsToDelete)
-    check deleted == 5
+    var deletedCount = 0
+    let dbPtr = addr db
+    let idsPtr = addr idsToDelete
+    db.batch(proc() {.gcsafe.} =
+      for id in idsPtr[]:
+        if dbPtr[].delete(id):
+          deletedCount += 1
+    )
+    check deletedCount == 5
     check db.query().count() == 5
 
   test "Batch operations":

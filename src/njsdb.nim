@@ -1210,8 +1210,8 @@ proc distinctValues*(this: NJSDBQuery, field: string): seq[string] {.gcsafe.} =
             result.add(row[0])
 
 
-## Remove the documents matched by this query.
-proc remove*(this: NJSDBQuery): int {.discardable.} =
+## Delete the documents matched by this query.
+proc delete*(this: NJSDBQuery): int {.discardable.} =
 
     # Get database reference
     let db = cast[ptr NJSDB](this.db)[]
@@ -1222,6 +1222,11 @@ proc remove*(this: NJSDBQuery): int {.discardable.} =
 
     # Run the query
     return int db.conn.execAffectedRows(sql(sqlStr), bindValues)
+
+
+## Deprecated: Use delete instead
+proc remove*(this: NJSDBQuery): int {.discardable, deprecated: "Use delete instead".} =
+    return this.delete()
 
 
 ## Execute the query and return the first document found, or null if not found.
@@ -1243,9 +1248,14 @@ proc get*(this: NJSDB, id: string): JsonNode =
     return this.query().where("id", "==", id).get()
 
 
-## Helper: Remove a document with the specified ID. Returns true if a document was removed.
-proc removeOne*(this: NJSDB, id: string): bool =
-    return this.query().where("id", "==", id).limit(1).remove() > 0
+## Delete a document with the specified ID. Returns true if a document was deleted.
+proc delete*(this: NJSDB, id: string): bool =
+    return this.query().where("id", "==", id).limit(1).delete() > 0
+
+
+## Deprecated: Use delete instead
+proc removeOne*(this: NJSDB, id: string): bool {.deprecated: "Use delete instead".} =
+    return this.delete(id)
 
 
 ## Update the documents matched by this query with the given fields. Returns the number of documents updated.
@@ -1719,9 +1729,9 @@ proc upsert*(this: NJSDB, document: JsonNode, merge: bool): int {.discardable.} 
         this.writeDocument(existingDoc)
     return 1
 
-## Bulk insert multiple documents efficiently
+## Insert multiple documents efficiently
 ## Returns the number of documents inserted
-proc bulkInsert*(this: NJSDB, documents: seq[JsonNode]): int {.discardable.} =
+proc insertMany*(this: NJSDB, documents: seq[JsonNode]): int {.discardable.} =
     ## Efficiently inserts multiple documents in a single transaction
     ## Much faster than individual put() calls for large datasets
     
@@ -1736,20 +1746,9 @@ proc bulkInsert*(this: NJSDB, documents: seq[JsonNode]): int {.discardable.} =
     return count
 
 
-## Bulk delete multiple documents by ID
-## Returns the number of documents deleted
-proc bulkDelete*(this: NJSDB, ids: seq[string]): int {.discardable.} =
-    ## Efficiently deletes multiple documents by ID in a single transaction
-    
-    if ids.len == 0:
-        return 0
-    
-    var count = 0
-    this.batch do():
-        for id in ids:
-            if this.removeOne(id):
-                count += 1
-    return count
+## Deprecated: Use insertMany instead
+proc bulkInsert*(this: NJSDB, documents: seq[JsonNode]): int {.discardable, deprecated: "Use insertMany instead".} =
+    this.insertMany(documents)
 
 
 ## Aggregation pipeline stage types

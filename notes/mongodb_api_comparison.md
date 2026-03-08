@@ -15,7 +15,7 @@
 | `put(doc)` | `insertOne(doc)` | 插入文档 |
 | `put(doc, merge=true)` | `updateOne({_id: id}, {$set: doc}, {upsert: true})` | 合并更新 |
 | `get(id)` | `findOne({_id: id})` | 根据ID获取 |
-| `removeOne(id)` | `deleteOne({_id: id})` | 删除单个 |
+| `delete(id)` | `deleteOne({_id: id})` | 删除单个 |
 | `upsert(doc)` | `replaceOne({_id: id}, doc, {upsert: true})` | 存在更新，不存在插入 |
 
 ## 查询操作
@@ -31,15 +31,15 @@
 | `query().limit(n)` | `find().limit(n)` | 限制数量 |
 | `query().skip(n)` | `find().skip(n)` | 跳过文档 |
 | `query().distinctValues(field)` | `distinct(field)` | 去重值 |
-| `query().remove()` | `deleteMany(filter)` | 删除多个 |
+| `query().delete()` | `deleteMany(filter)` | 删除多个 |
 | `query().update(updates)` | `updateMany(filter, updates)` | 更新多个 |
 
 ## 批量操作
 
 | SimpleDB | MongoDB | 说明 |
 |----------|---------|------|
-| `bulkInsert(docs)` | `insertMany(docs)` | 批量插入 |
-| `bulkDelete(ids)` | `deleteMany({_id: {$in: ids}})` | 批量删除 |
+| `insertMany(docs)` | `insertMany(docs)` | 批量插入 |
+| `batch(proc)` + `delete(id)` | `deleteMany({_id: {$in: ids}})` | 批量删除 |
 | `batch(proc)` | `withTransaction()` | 事务批处理 |
 
 ## 聚合操作
@@ -89,16 +89,16 @@
 | `$lt` | ✅ | ✅ |
 | `$lte` | ✅ | ✅ |
 | `$in` | ✅ | ✅ |
-| `$nin` | ❌ | ✅ |
+| `$nin` | ✅ | ✅ |
 | `$exists` | ✅ | ✅ |
-| `$type` | ❌ | ✅ |
+| `$type` | ✅ | ✅ |
 | `$regex` | ❌ | ✅ |
 | `$all` | ✅ | ✅ |
 | `$size` | ✅ | ✅ |
 | `$or` | ✅ | ✅ |
 | `$and` | ✅ | ✅ |
-| `$not` | ❌ | ✅ |
-| `$nor` | ❌ | ✅ |
+| `$not` | ✅ | ✅ |
+| `$nor` | ✅ | ✅ |
 
 ## 更新操作符
 

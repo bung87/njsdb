@@ -73,14 +73,14 @@ suite "NJSDB Basic Operations":
         var doc = %*{ "id": "doc1", "name": "Test Document" }
         db.put(doc)
 
-        let removed = db.removeOne("doc1")
-        check removed == true
+        let deleted = db.delete("doc1")
+        check deleted == true
 
         var retrieved = db.get("doc1")
         check retrieved == nil
 
-        let removedAgain = db.removeOne("doc1")
-        check removedAgain == false
+        let deletedAgain = db.delete("doc1")
+        check deletedAgain == false
 
         db.close()
 
@@ -472,7 +472,7 @@ suite "NJSDB Collections":
     db.collection("active").put(%*{ "id": "doc1", "status": "active" })
     db.collection("archived").put(%*{ "id": "doc1", "status": "archived" })
 
-    let deleted = db.collection("active").removeOne("doc1")
+    let deleted = db.collection("active").delete("doc1")
     check deleted == true
 
     check db.collection("active").get("doc1") == nil
