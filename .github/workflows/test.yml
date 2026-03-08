@@ -11,15 +11,20 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        nim-version: ['2.0.x', '2.2.x', 'stable']
+        nim-version:
+          - binary:2.0.0
+          - binary:2.2.0
+          - binary:stable
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Setup Nim
-      uses: iffy/nim-install-action@v1
+      uses: iffy/install-nim@v5
       with:
-        nim-version: ${{ matrix.nim-version }}
+        version: ${{ matrix.nim-version }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install dependencies
       run: nimble install -y
