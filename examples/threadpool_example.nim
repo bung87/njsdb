@@ -24,7 +24,7 @@ proc main() =
 
     # Create and start thread pool
     echo "Creating thread pool..."
-    let pool = newThreadPoolNJSDB(DbFile, numWorkers = NumWorkers)
+    var pool = newThreadPoolNJSDB(DbFile, numWorkers = NumWorkers)
     pool.start()
     echo "Thread pool started"
     echo ""
