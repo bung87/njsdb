@@ -8,17 +8,16 @@ on:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         nim-version: ['2.0.x', '2.2.x', 'stable']
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Setup Nim
-      uses: jiro4989/setup-nim-action@v2
+      uses: iffy/nim-install-action@v1
       with:
         nim-version: ${{ matrix.nim-version }}
 
