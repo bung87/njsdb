@@ -1,5 +1,6 @@
 # NJSDB
 
+[![Tests](https://github.com/bung87/njsdb/actions/workflows/test.yml/badge.svg)](https://github.com/bung87/njsdb/actions/workflows/test.yml)
 ![](https://img.shields.io/badge/status-beta-orange)
 ![](https://img.shields.io/badge/platforms-native%20only-orange)
 
