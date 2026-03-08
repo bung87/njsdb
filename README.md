@@ -43,7 +43,7 @@ import json
 var db = NJSDB()
 db.open("database.db")  # Use ":memory:" for in-memory database
 
-# ⚠️ IMPORTANT: You MUST select a collection before any database operation!
+# Select a collection to work with
 db.collection("documents")
 
 # Insert a document
@@ -88,32 +88,11 @@ db.collection("products")
    .list()
 ```
 
-⚠️ **IMPORTANT**: You **MUST** call `collection()` before any database operation (`put`, `get`, `query`, `delete`, etc.). If you don't, a `NJSDBError` will be raised with the message: `"No collection selected. Call collection(name) first."`
-
-### Example Without Collection (Will Fail)
-
-```nim
-var db = NJSDB()
-db.open("database.db")
-# ❌ Missing: db.collection("...")
-db.put(%*{ "id": "test" })  # Raises NJSDBError!
-```
-
-### Example With Collection (Correct)
-
-```nim
-var db = NJSDB()
-db.open("database.db")
-db.collection("users")  # ✓ Select collection first
-db.put(%*{ "id": "test" })  # Works correctly
-```
-
 ## CRUD Operations
 
 ### Create / Update
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Insert or replace a document
@@ -150,7 +129,6 @@ db.upsert(%*{
 ### Read
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Get document by ID
@@ -177,7 +155,6 @@ let exists = db.get("doc1") != nil
 ### Delete
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Delete by ID
@@ -194,7 +171,6 @@ let deletedCount = db.query()
 ### Basic Queries
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Chain multiple where clauses
@@ -211,7 +187,6 @@ db.query().where("name", "!=", "").list()
 ### MongoDB-style Filters
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Using filter() with JSON objects
@@ -240,7 +215,6 @@ let filter = %*{
 ### Logical Operators
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # $or operator
@@ -286,7 +260,6 @@ let filter = %*{
 ### Array Operators
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # $all - Array contains all specified values
@@ -304,7 +277,6 @@ let filter = %*{
 ### Existence and Type Operators
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # $exists operator
@@ -324,7 +296,6 @@ db.query().filter(filter).list()
 ### Nested Field Queries
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Query nested objects using dot notation
@@ -342,7 +313,6 @@ db.query().filter(filter).list()
 ## Sorting, Limiting, and Pagination
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Sort results
@@ -364,7 +334,6 @@ db.query()
 ## Projection (Field Selection)
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Include only specific fields
@@ -381,7 +350,6 @@ db.query().project(projection).list()
 ## Update Operators
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # $set - Set field values
@@ -426,7 +394,6 @@ db.updateOne("doc1", %*{
 ### Basic Aggregation
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Extended aggregation with multiple operators
@@ -456,7 +423,6 @@ let result = db.aggregate("category", %*{ "$sum": "amount" }, filter)
 MongoDB-style aggregation pipeline with multiple stages:
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Basic aggregation pipeline: match and group
@@ -508,7 +474,6 @@ let result = db.aggregate(@[
 ## Bulk Operations
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Insert multiple documents efficiently
@@ -523,7 +488,6 @@ let inserted = db.insertMany(docs)
 ## Transactions
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Execute operations in a transaction
@@ -537,7 +501,6 @@ db.withTransaction(proc() {.gcsafe.} =
 ## Utility Methods
 
 ```nim
-# Select collection first
 db.collection("documents")
 
 # Get distinct values for a field
@@ -559,7 +522,6 @@ for doc in db.query().where("status", "==", "active").list():
 NJSDB defines several exception types:
 
 ```nim
-# Select collection first (or you'll get NJSDBError!)
 db.collection("documents")
 
 try:
