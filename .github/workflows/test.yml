@@ -19,8 +19,7 @@ jobs:
       matrix:
         nim-version:
           - binary:2.0.0
-          - binary:2.2.0
-          - binary:stable
+          - binary:2.2.6
 
     steps:
     - uses: actions/checkout@v4
