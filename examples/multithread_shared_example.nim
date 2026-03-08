@@ -61,7 +61,7 @@ proc workerThread(workerId: int) {.thread.} =
     # Each worker has its own database connection
     var db = NJSDB()
     db.open(DbFile)
-    db.collection("tasks")
+    discard db.collection("tasks")
 
     var processed = 0
 
@@ -127,7 +127,7 @@ proc main() =
     block:
         var db = NJSDB()
         db.open(DbFile)
-        db.collection("tasks")
+        discard db.collection("tasks")
         db.close()
 
     # Initialize work queue
@@ -196,7 +196,7 @@ proc main() =
     echo "=== Verification ==="
     var db = NJSDB()
     db.open(DbFile)
-    db.collection("tasks")
+    discard db.collection("tasks")
 
     let totalDocs = db.query().count()
     let pending = db.query().where("status", "==", "pending").count()

@@ -6,3 +6,4 @@ tests/tests
 nimble.develop
 nimble.paths
 nimbledeps
+*.db*

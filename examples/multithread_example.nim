@@ -2,27 +2,33 @@
 ##
 ## This example demonstrates how to use NJSDB in a multi-threaded environment.
 ## Each thread has its own database connection, but they share the same database file.
+##
+## Note: SQLite uses database-level locking. When multiple threads write concurrently,
+## some threads may get "database is locked" errors. This example shows how to handle
+## that with retry logic.
 
-import std/[os, strutils, json, locks, times]
+import std/[os, strutils, json, times, random]
 import njsdb
+import db_connector/db_sqlite
 
 # Configuration
 const
     NumThreads = 4
-    DocumentsPerThread = 100
+    DocumentsPerThread = 50
     DbFile = "multithread_test.db"
+    MaxRetries = 10
+    BaseDelayMs = 10
 
 # Thread data structure
 type
     ThreadData = object
         threadId: int
-        db: NJSDB
 
 # Initialize database schema (called once before threads start)
 proc initDatabase(filename: string) =
     var db = NJSDB()
     db.open(filename)
-    db.collection("documents")
+    discard db.collection("documents")
     db.close()
 
 # Worker thread procedure
@@ -33,10 +39,11 @@ proc workerThread(data: ThreadData) {.thread.} =
     # Each thread creates its own database connection
     var db = NJSDB()
     db.open(DbFile)
-    db.collection("documents")
+    discard db.collection("documents")
 
-    # Insert documents
+    # Insert documents with retry logic
     let startTime = cpuTime()
+    var inserted = 0
     for i in 0..<DocumentsPerThread:
         let docId = "thread" & $threadId & "_doc" & $i
         let doc = %*{
@@ -47,31 +54,59 @@ proc workerThread(data: ThreadData) {.thread.} =
             "timestamp": epochTime(),
             "data": "Data from thread " & $threadId & " document " & $i
         }
-        db.put(doc)
+        
+        # Retry insert with exponential backoff
+        var retries = 0
+        var success = false
+        while retries < MaxRetries and not success:
+            try:
+                db.put(doc)
+                success = true
+                inserted += 1
+            except DbError:
+                retries += 1
+                if retries < MaxRetries:
+                    let delay = BaseDelayMs * (1 shl retries)
+                    sleep(delay)
+        
+        if not success:
+            echo "Thread ", threadId, " failed to insert doc ", i, " after ", MaxRetries, " retries"
 
     let insertTime = cpuTime() - startTime
-    echo "Thread ", threadId, " inserted ", DocumentsPerThread, " documents in ", insertTime.formatFloat(ffDecimal, 3), "s"
+    echo "Thread ", threadId, " inserted ", inserted, "/", DocumentsPerThread, " documents in ", insertTime.formatFloat(ffDecimal, 3), "s"
 
-    # Query documents inserted by this thread
+    # Query documents inserted by this thread (simple query without sorting)
     let queryStart = cpuTime()
     let results = db.query()
-        .where("threadId", "==", threadId)
-        .sort("sequence", ascending = true, isNumber = true)
+        .where("threadId", "==", threadId.float)
         .list()
     let queryTime = cpuTime() - queryStart
 
     echo "Thread ", threadId, " queried ", results.len, " documents in ", queryTime.formatFloat(ffDecimal, 3), "s"
 
-    # Update some documents
+    # Update some documents with retry logic
     let updateStart = cpuTime()
-    db.query()
-        .where("threadId", "==", threadId)
-        .where("sequence", "<", 50)
-        .update(%*{
-            "$set": { "updated": true, "updatedBy": threadId }
-        })
+    var updateRetries = 0
+    var updateSuccess = false
+    while updateRetries < MaxRetries and not updateSuccess:
+        try:
+            db.query()
+                .where("threadId", "==", threadId.float)
+                .where("sequence", "<", 25)
+                .update(%*{
+                    "$set": { "updated": 1, "updatedBy": threadId }
+                })
+            updateSuccess = true
+        except DbError:
+            updateRetries += 1
+            if updateRetries < MaxRetries:
+                let delay = BaseDelayMs * (1 shl updateRetries)
+                sleep(delay)
+    
+    if not updateSuccess:
+        echo "Thread ", threadId, " failed to update documents"
+    
     let updateTime = cpuTime() - updateStart
-
     echo "Thread ", threadId, " updated documents in ", updateTime.formatFloat(ffDecimal, 3), "s"
 
     # Close database connection
@@ -102,7 +137,7 @@ proc main() =
     let totalStart = cpuTime()
 
     for i in 0..<NumThreads:
-        threadData[i] = ThreadData(threadId: i, db: NJSDB())
+        threadData[i] = ThreadData(threadId: i)
         createThread(threads[i], workerThread, threadData[i])
 
     # Wait for all threads to complete
@@ -119,7 +154,7 @@ proc main() =
     echo "=== Verification ==="
     var db = NJSDB()
     db.open(DbFile)
-    db.collection("documents")
+    discard db.collection("documents")
 
     let totalDocs = db.query().count()
     echo "Total documents in database: ", totalDocs
@@ -132,7 +167,7 @@ proc main() =
 
     # Count updated documents
     let updatedDocs = db.query()
-        .where("updated", "==", true)
+        .where("updated", "==", 1)
         .count()
     echo "Updated documents: ", updatedDocs
 
@@ -141,7 +176,7 @@ proc main() =
     echo "=== Sample data from each thread ==="
     for i in 0..<NumThreads:
         let sample = db.query()
-            .where("threadId", "==", i)
+            .where("threadId", "==", i.float)
             .limit(2)
             .list()
         echo "Thread ", i, " samples:"
@@ -160,4 +195,5 @@ proc main() =
     echo "=== Example completed successfully ==="
 
 # Run main
+randomize()
 main()
