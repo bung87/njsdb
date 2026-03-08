@@ -141,7 +141,6 @@ db.collection("orders").aggregate(@[
 - `put()` 同时支持 insert 和 replace
 - `query()` 返回查询构建器，支持链式调用
 - `aggregate()` 支持简化版和完整 pipeline 两种形式
-- `insertMany()` 批量插入（替代 MongoDB 的 insertMany）
 - `batch()` 事务批处理（替代 MongoDB 的 withTransaction）
 
 ### MongoDB 特有
