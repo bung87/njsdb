@@ -1,8 +1,8 @@
-# SimpleDB Code Review
+# NJSDB Code Review
 
 ## Executive Summary
 
-SimpleDB is a well-structured NoSQL-style document database built on SQLite. The codebase shows good understanding of Nim and SQLite JSON functions, but has several areas for improvement regarding idiomatic Nim usage, performance, memory safety, and API design.
+NJSDB is a well-structured NoSQL-style document database built on SQLite. The codebase shows good understanding of Nim and SQLite JSON functions, but has several areas for improvement regarding idiomatic Nim usage, performance, memory safety, and API design.
 
 ---
 
@@ -30,7 +30,7 @@ The `FilterOp` enum is defined but never used. The code uses string-based operat
 
 ```nim
 # Option 1: Use the enum
-class SimpleDBFilter:
+class NJSDBFilter:
     var operation: FilterOp  # Instead of string
 
 # Option 2: Remove the unused enum
@@ -59,19 +59,19 @@ Now uses appropriate exception types:
 - `DocumentError` for document-related issues (null documents, invalid document structure)
 
 #### Issue 1.2.3: ⚠️ CANNOT FIX: Method vs Proc
-**Location**: Throughout SimpleDBQuery
+**Location**: Throughout NJSDBQuery
 **Status**: **BLOCKED** - The `classes` library requires `method` routines in class bodies
 
 The code uses `method` for what should ideally be `proc`. In Nim, `method` implies dynamic dispatch (vtable-based), which is unnecessary here since there's no inheritance hierarchy.
 
 **Current**:
 ```nim
-method where(field: string, ...): SimpleDBQuery {.gcsafe.} =
+method where(field: string, ...): NJSDBQuery {.gcsafe.} =
 ```
 
 **Recommended**:
 ```nim
-proc where*(field: string, ...): SimpleDBQuery {.gcsafe.} =
+proc where*(field: string, ...): NJSDBQuery {.gcsafe.} =
 ```
 
 **Limitation**: The `classes` library enforces that only `method` routines are allowed in class bodies. Attempting to use `proc` results in the error: "Only 'method' routines are allowed in the class body."
@@ -155,17 +155,17 @@ While the code uses parameterized queries (good!), it rebuilds the SQL string fo
 
 ```nim
 # Before:
-var db: RootRef  # In SimpleDBQuery
+var db: RootRef  # In NJSDBQuery
 # ...
-let db = cast[SimpleDB](this.db)  # Unsafe cast
+let db = cast[NJSDB](this.db)  # Unsafe cast
 
 # After:
-var db: pointer  # In SimpleDBQuery
+var db: pointer  # In NJSDBQuery
 # ...
-let db = cast[ptr SimpleDB](this.db)[]  # Explicit pointer cast
+let db = cast[ptr NJSDB](this.db)[]  # Explicit pointer cast
 ```
 
-The `query()` method now allocates a stable heap copy of SimpleDB to ensure the pointer remains valid.
+The `query()` method now allocates a stable heap copy of NJSDB to ensure the pointer remains valid.
 
 ### 3.2 ✅ FIXED: Special Variable Shadowing
 **Location**: Line 934
@@ -175,7 +175,7 @@ The code previously had a variable `docs` that shadowed Nim's implicit `result` 
 
 **Before**:
 ```nim
-proc list*(this: SimpleDBQuery): seq[JsonNode] =
+proc list*(this: NJSDBQuery): seq[JsonNode] =
     var docs: seq[JsonNode]  # 'result' is implicitly declared
     # ...
     result = docs  # Shadowing warning
@@ -183,7 +183,7 @@ proc list*(this: SimpleDBQuery): seq[JsonNode] =
 
 **After**:
 ```nim
-proc list*(this: SimpleDBQuery): seq[JsonNode] =
+proc list*(this: NJSDBQuery): seq[JsonNode] =
     # ...
     for row in db.conn.rows(sql(sqlStr), bindValues):
         var doc = parseJson(row[0])
@@ -237,10 +237,10 @@ proc update*(...): int {.discardable.}  # Returns count
 proc remove*(...): bool {.discardable.}  # Returns boolean (inconsistent!)
 
 # After:
-proc remove*(this: SimpleDBQuery): int           # Always returns count
-proc removeOne*(this: SimpleDB, id: string): bool # Returns success for single doc
-proc update*(this: SimpleDBQuery): int 
-proc updateOne*(this: SimpleDB, id: string): bool
+proc remove*(this: NJSDBQuery): int           # Always returns count
+proc removeOne*(this: NJSDB, id: string): bool # Returns success for single doc
+proc update*(this: NJSDBQuery): int 
+proc updateOne*(this: NJSDB, id: string): bool
 ```
 
 **Pattern**: Query versions return `int` (count), single-document `*One` versions return `bool` (success).
@@ -251,12 +251,12 @@ proc updateOne*(this: SimpleDB, id: string): bool
 
 ```nim
 # Before:
-proc upsert*(this: SimpleDB, document: JsonNode): bool =
+proc upsert*(this: NJSDB, document: JsonNode): bool =
     if document{"id"}.isNil: 
         document["id"] = % $genOid()  # Modifies input!
 
 # After:
-proc upsert*(this: SimpleDB, document: JsonNode): int =
+proc upsert*(this: NJSDB, document: JsonNode): int =
     var docCopy = document.copy()  # Create a copy
     if docCopy{"id"}.isNil:
         docCopy["id"] = % $genOid()
@@ -282,9 +282,9 @@ Overuse of `{.discardable.}` can hide bugs. Only use it when the return value is
 ## 5. Structural Issues
 
 ### 5.1 🔴 God Object Pattern
-**Location**: SimpleDBQuery class
+**Location**: NJSDBQuery class
 
-The `SimpleDBQuery` class has too many responsibilities:
+The `NJSDBQuery` class has too many responsibilities:
 - Query building
 - Filter management
 - SQL generation
@@ -324,21 +324,21 @@ The two `where` methods (string and float) were nearly identical.
 
 **Before**:
 ```nim
-method where(field: string, operation: string, value: string): SimpleDBQuery {.gcsafe.} =
+method where(field: string, operation: string, value: string): NJSDBQuery {.gcsafe.} =
     if field.len == 0: raise newException(ValidationError, "No field provided")
     if operation.len == 0: raise newException(ValidationError, "No operation provided")
     if operation notin ["==", "!=", "<", "<=", ">", ">="]:
         raise newException(ValidationError, "Unknown operation: " & operation)
-    let filter = SimpleDBFilter(field: field, operation: operation, value: value, fieldIsNumber: false)
+    let filter = NJSDBFilter(field: field, operation: operation, value: value, fieldIsNumber: false)
     this.filters.add(filter)
     return this
 ```
 
 **After**:
 ```nim
-method where(field: string, operation: string, value: string): SimpleDBQuery {.gcsafe.} =
+method where(field: string, operation: string, value: string): NJSDBQuery {.gcsafe.} =
     validateWhereParams(field, operation)
-    let filter = SimpleDBFilter(field: field, operation: operation, value: value, fieldIsNumber: false)
+    let filter = NJSDBFilter(field: field, operation: operation, value: value, fieldIsNumber: false)
     this.filters.add(filter)
     return this
 ```
@@ -352,7 +352,7 @@ Procs like `buildFilterSql`, `buildArrayFilterSql` take filters but could be met
 
 **Recommended**:
 ```nim
-class SimpleDBFilter:
+class NJSDBFilter:
     proc toSql(bindValues: var seq[string]): string =
         # Generate SQL for this filter
 ```
@@ -403,7 +403,7 @@ Comments use `##` (documentation) even for private/internal code. Use `##` only 
 4. ~~**Document side effects** in upsert~~ ✅ **RESOLVED** (no more side effects)
 
 ### Long Term (Low Priority)
-1. **Refactor SimpleDBQuery** into smaller, focused types
+1. **Refactor NJSDBQuery** into smaller, focused types
 2. **Implement prepared statement caching** for repeated queries
 3. ~~**Add projection at SQL level** instead of post-processing~~ ✅ **RESOLVED**
 4. **Add comprehensive API documentation** with examples
@@ -432,7 +432,7 @@ Comments use `##` (documentation) even for private/internal code. Use `##` only 
 ### RootRef Removal (Completed)
 - Changed `var db: RootRef` to `var db: pointer`
 - `query()` method allocates stable heap copy using `alloc0()`
-- Updated all casts to use `cast[ptr SimpleDB](this.db)[]`
+- Updated all casts to use `cast[ptr NJSDB](this.db)[]`
 
 ---
 

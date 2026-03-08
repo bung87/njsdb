@@ -1,8 +1,8 @@
-# SimpleDB vs MongoDB API 对比
+# NJSDB vs MongoDB API 对比
 
 ## 基础操作
 
-| SimpleDB | MongoDB | 说明 |
+| NJSDB | MongoDB | 说明 |
 |----------|---------|------|
 | `open(path)` | `MongoClient.connect()` | 连接数据库 |
 | `collection(name)` | `db.collection(name)` | 选择集合 |
@@ -10,7 +10,7 @@
 
 ## 文档操作
 
-| SimpleDB | MongoDB | 说明 |
+| NJSDB | MongoDB | 说明 |
 |----------|---------|------|
 | `put(doc)` | `insertOne(doc)` | 插入文档 |
 | `put(doc, merge=true)` | `updateOne({_id: id}, {$set: doc}, {upsert: true})` | 合并更新 |
@@ -20,7 +20,7 @@
 
 ## 查询操作
 
-| SimpleDB | MongoDB | 说明 |
+| NJSDB | MongoDB | 说明 |
 |----------|---------|------|
 | `query().list()` | `find(filter).toArray()` | 查询列表 |
 | `query().get()` | `findOne(filter)` | 查询单个 |
@@ -36,7 +36,7 @@
 
 ## 批量操作
 
-| SimpleDB | MongoDB | 说明 |
+| NJSDB | MongoDB | 说明 |
 |----------|---------|------|
 | `insertMany(docs)` | `insertMany(docs)` | 批量插入 |
 | `batch(proc)` + `delete(id)` | `deleteMany({_id: {$in: ids}})` | 批量删除 |
@@ -44,7 +44,7 @@
 
 ## 聚合操作
 
-| SimpleDB | MongoDB | 说明 |
+| NJSDB | MongoDB | 说明 |
 |----------|---------|------|
 | `aggregate(pipeline)` | `aggregate(pipeline)` | 聚合管道 |
 | `aggregate(groupField, ops)` | `aggregate([{$group}])` | 简化聚合 |
@@ -52,7 +52,7 @@
 
 ### 支持的聚合阶段
 
-| 阶段 | SimpleDB | MongoDB |
+| 阶段 | NJSDB | MongoDB |
 |------|----------|---------|
 | `$match` | ✅ | ✅ |
 | `$group` | ✅ | ✅ |
@@ -67,7 +67,7 @@
 
 ### 支持的聚合操作符
 
-| 操作符 | SimpleDB | MongoDB |
+| 操作符 | NJSDB | MongoDB |
 |--------|----------|---------|
 | `$sum` | ✅ | ✅ |
 | `$avg` | ✅ | ✅ |
@@ -80,7 +80,7 @@
 
 ## 查询操作符
 
-| 操作符 | SimpleDB | MongoDB |
+| 操作符 | NJSDB | MongoDB |
 |--------|----------|---------|
 | `$eq` | ✅ | ✅ |
 | `$ne` | ✅ | ✅ |
@@ -102,7 +102,7 @@
 
 ## 更新操作符
 
-| 操作符 | SimpleDB | MongoDB |
+| 操作符 | NJSDB | MongoDB |
 |--------|----------|---------|
 | `$set` | ✅ | ✅ |
 | `$unset` | ✅ | ✅ |
@@ -117,7 +117,7 @@
 
 ## 主要差异总结
 
-### SimpleDB 特有
+### NJSDB 特有
 - `put()` 同时支持 insert 和 replace
 - `query()` 返回查询构建器，支持链式调用
 - `aggregate()` 支持简化版和完整 pipeline 两种形式
