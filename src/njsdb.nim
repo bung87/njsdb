@@ -555,8 +555,8 @@ class NJSDB:
                 this.extraColumns.add(columnName)
 
 
-    ## Execute a batch of transactions. Either they all succeed, or the database will not be updated. This is also much faster when saving lots of documents at once.
-    method batch(code: proc() {.gcsafe.}) {.gcsafe.} =
+    ## Execute a transaction. Either they all succeed, or the database will not be updated. This is also much faster when saving lots of documents at once.
+    method withTransaction(code: proc() {.gcsafe.}) {.gcsafe.} =
 
         # Prepate database
         this.prepareDB()
@@ -606,7 +606,7 @@ class NJSDB:
             return
 
         # Begin an update transaction
-        this.batch do():
+        this.withTransaction do():
 
             # Create new field on the table
             let str = "ALTER TABLE " & this.currentCollection & " ADD \"" & sqlName & "\" " & sqlType
@@ -1693,7 +1693,7 @@ proc insertMany*(this: NJSDB, documents: seq[JsonNode]): int {.discardable.} =
         return 0
     
     var count = 0
-    this.batch do():
+    this.withTransaction do():
         for doc in documents:
             this.put(doc)
             count += 1

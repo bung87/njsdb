@@ -465,12 +465,12 @@ suite "NJSDB Bulk Operations":
     for i in 1..10:
       db.put(%*{ "id": "del-" & $i, "name": "Item " & $i })
 
-    # Use batch + delete for bulk deletion
+    # Use withTransaction + delete for bulk deletion
     let idsToDelete = @["del-2", "del-4", "del-6", "del-8", "del-10"]
     var deletedCount = 0
     let dbPtr = addr db
     let idsPtr = addr idsToDelete
-    db.batch(proc() {.gcsafe.} =
+    db.withTransaction(proc() {.gcsafe.} =
       for id in idsPtr[]:
         if dbPtr[].delete(id):
           deletedCount += 1
@@ -478,11 +478,11 @@ suite "NJSDB Bulk Operations":
     check deletedCount == 5
     check db.query().count() == 5
 
-  test "Batch operations":
-    # Test batch transaction - batch wraps multiple operations in a transaction
+  test "Transaction operations":
+    # Test transaction - withTransaction wraps multiple operations in a transaction
     # Use pointer to avoid GC-safety issues with captured var
     let dbPtr = addr db
-    db.batch(proc() {.gcsafe.} =
+    db.withTransaction(proc() {.gcsafe.} =
       dbPtr[].put(%*{ "id": "batch1", "name": "Item 1" })
       dbPtr[].put(%*{ "id": "batch2", "name": "Item 2" })
       dbPtr[].put(%*{ "id": "batch3", "name": "Item 3" })

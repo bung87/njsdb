@@ -17,7 +17,7 @@
 | **Existence Check** | `$exists` | Field presence/absence |
 | **Type Checking** | `$type` | Query by JSON value type |
 | **Merge Updates** | `put(doc, merge = true)` | Partial document updates |
-| **Batch Operations** | `.batch()` | Transaction wrapper |
+| **Transactions** | `.withTransaction()` | Transaction wrapper |
 | **Count** | `.count()` | Document counting |
 | **Distinct Values** | `.distinctValues(field)` | Unique field values |
 | **Update with $set** | `.update(%*{"$set": {...}})` | Partial updates via query |
@@ -135,7 +135,7 @@ db.bulkDelete(@["1", "2", "3"])
 
 # Transaction batch
 let dbPtr = addr db
-db.batch(proc() {.gcsafe.} =
+db.withTransaction(proc() {.gcsafe.} =
   dbPtr[].put(%*{ "id": "1", "value": 100 })
   dbPtr[].put(%*{ "id": "2", "value": 200 })
 )
