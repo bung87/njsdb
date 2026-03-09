@@ -67,8 +67,9 @@ proc dequeue(q: var TaskQueue): Task =
         if q.shutdown:
             return Task(taskType: ttShutdown)
         
-        result = q.tasks[0]
+        let task = q.tasks[0]
         q.tasks.delete(0)
+        return task
 
 # Mark queue as shutdown
 proc shutdown(q: var TaskQueue) =
@@ -187,13 +188,14 @@ proc newThreadPoolNJSDB*(dbPath: string, numWorkers: int = 4): ThreadPoolNJSDB =
     ##   # ... use pool ...
     ##   pool.stop()
     
-    result = ThreadPoolNJSDB(
+    var pool = ThreadPoolNJSDB(
         dbPath: dbPath,
         numWorkers: numWorkers,
         workers: newSeq[Thread[ptr TaskQueue]](numWorkers),
         started: false
     )
-    initQueue(result.queue)
+    initQueue(pool.queue)
+    return pool
 
 # Start the thread pool
 proc start*(pool: var ThreadPoolNJSDB) =

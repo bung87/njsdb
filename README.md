@@ -397,7 +397,7 @@ db.updateOne("doc1", %*{
 db.collection("documents")
 
 # Extended aggregation with multiple operators
-let result = db.aggregate("category", %*{
+let aggResult = db.aggregate("category", %*{
     "$sum": "amount",
     "$avg": "price",
     "$min": "stock",
@@ -405,7 +405,7 @@ let result = db.aggregate("category", %*{
 })
 
 # Access aggregation results
-for agg in result:
+for agg in aggResult:
     echo "Category: ", agg.groupId
     echo "Count: ", agg.count
     echo "Total: ", agg.sum
@@ -415,7 +415,7 @@ for agg in result:
 
 # Aggregate with filter
 let filter = %*{ "status": "active" }
-let result = db.aggregate("category", %*{ "$sum": "amount" }, filter)
+let aggResult2 = db.aggregate("category", %*{ "$sum": "amount" }, filter)
 ```
 
 ### Aggregation Pipeline
@@ -426,17 +426,17 @@ MongoDB-style aggregation pipeline with multiple stages:
 db.collection("documents")
 
 # Basic aggregation pipeline: match and group
-let result = db.aggregate(@[
+let pipelineResult = db.aggregate(@[
     %*{ "$match": { "status": "completed" } },
     %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } }
 ])
 
-for doc in result.data:
+for doc in pipelineResult.data:
     echo "Customer: ", doc["_id"].getStr
     echo "Total: ", doc["total"].getFloat
 
 # Multiple aggregation operators
-let result = db.aggregate(@[
+let pipelineResult2 = db.aggregate(@[
     %*{ "$match": { "year": 2024 } },
     %*{ "$group": { 
         "_id": "$region", 
@@ -450,7 +450,7 @@ let result = db.aggregate(@[
 ])
 
 # Pipeline stages: $match, $group, $sort, $limit, $skip, $project, $count
-let result = db.aggregate(@[
+let pipelineResult3 = db.aggregate(@[
     %*{ "$match": { "status": "active" } },
     %*{ "$group": { "_id": "$category", "count": { "$sum": 1 } } },
     %*{ "$sort": { "count": -1 } },
@@ -459,13 +459,13 @@ let result = db.aggregate(@[
 ])
 
 # $project stage
-let result = db.aggregate(@[
+let pipelineResult4 = db.aggregate(@[
     %*{ "$match": { "status": "active" } },
     %*{ "$project": { "name": 1, "email": 1 } }
 ])
 
 # $count stage
-let result = db.aggregate(@[
+let pipelineResult5 = db.aggregate(@[
     %*{ "$match": { "status": "active" } },
     %*{ "$count": "activeCount" }
 ])

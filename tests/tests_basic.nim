@@ -439,8 +439,8 @@ suite "NJSDB Collections":
     check db.collection("orders").get("user1") == nil
 
   test "Collection method chaining":
-    let result = db.collection("products")
-    check result is NJSDB
+    let collectionResult = db.collection("products")
+    check collectionResult is NJSDB
 
   test "Query across different collections":
     db.collection("active").put(%*{ "id": "doc1", "status": "active" })

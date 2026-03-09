@@ -418,25 +418,25 @@ suite "NJSDB Extended Aggregation":
     db.close()
 
   test "Aggregate with sum":
-    let result = db.aggregate("category", %*{ "$sum": "amount" })
-    check result.len == 2
+    let aggResult = db.aggregate("category", %*{ "$sum": "amount" })
+    check aggResult.len == 2
 
   test "Aggregate with avg":
-    let result = db.aggregate("category", %*{ "$avg": "amount" })
-    check result.len == 2
+    let aggResult = db.aggregate("category", %*{ "$avg": "amount" })
+    check aggResult.len == 2
 
   test "Aggregate with min and max":
-    let result = db.aggregate("category", %*{ "$min": "amount", "$max": "amount" })
-    check result.len == 2
+    let aggResult = db.aggregate("category", %*{ "$min": "amount", "$max": "amount" })
+    check aggResult.len == 2
 
   test "Aggregate with multiple operators":
-    let result = db.aggregate("category", %*{ "$sum": "amount", "$avg": "quantity" })
-    check result.len == 2
+    let aggResult = db.aggregate("category", %*{ "$sum": "amount", "$avg": "quantity" })
+    check aggResult.len == 2
 
   test "Aggregate with filter":
     let filter = %*{ "amount": { "$gte": 100 } }
-    let result = db.aggregate("category", %*{ "$sum": "amount" }, filter)
-    check result.len == 1
+    let aggResult = db.aggregate("category", %*{ "$sum": "amount" }, filter)
+    check aggResult.len == 1
 
 
 suite "NJSDB Bulk Operations":
@@ -511,34 +511,34 @@ suite "NJSDB Aggregate Pipeline":
     db.put(%*{ "id": "o3", "customerId": "c2", "amount": 150, "status": "completed" })
     db.put(%*{ "id": "o4", "customerId": "c2", "amount": 50, "status": "pending" })
 
-    let result = db.aggregate(@[
+    let pipelineResult = db.aggregate(@[
       %*{ "$match": { "status": "completed" } },
       %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } }
     ])
 
-    check result.count == 2
+    check pipelineResult.count == 2
 
   test "Aggregate with $sum: 1 (count)":
     db.put(%*{ "id": "o1", "customerId": "c1", "status": "completed" })
     db.put(%*{ "id": "o2", "customerId": "c1", "status": "completed" })
     db.put(%*{ "id": "o3", "customerId": "c2", "status": "completed" })
 
-    let result = db.aggregate(@[
+    let pipelineResult = db.aggregate(@[
       %*{ "$group": { "_id": "$customerId", "orderCount": { "$sum": 1 } } }
     ])
 
-    check result.count == 2
+    check pipelineResult.count == 2
 
   test "Aggregate with $avg, $min, $max":
     db.put(%*{ "id": "o1", "customerId": "c1", "amount": 100 })
     db.put(%*{ "id": "o2", "customerId": "c1", "amount": 200 })
     db.put(%*{ "id": "o3", "customerId": "c1", "amount": 300 })
 
-    let result = db.aggregate(@[
+    let pipelineResult = db.aggregate(@[
       %*{ "$group": { "_id": "$customerId", "avgAmount": { "$avg": "$amount" }, "minAmount": { "$min": "$amount" }, "maxAmount": { "$max": "$amount" } } }
     ])
 
-    check result.count == 1
+    check pipelineResult.count == 1
 
   test "Aggregate with $sort and $limit":
     db.put(%*{ "id": "o1", "customerId": "c1", "amount": 100 })
@@ -546,13 +546,13 @@ suite "NJSDB Aggregate Pipeline":
     db.put(%*{ "id": "o3", "customerId": "c3", "amount": 50 })
     db.put(%*{ "id": "o4", "customerId": "c4", "amount": 300 })
 
-    let result = db.aggregate(@[
+    let pipelineResult = db.aggregate(@[
       %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } },
       %*{ "$sort": { "total": -1 } },
       %*{ "$limit": 2 }
     ])
 
-    check result.count == 2
+    check pipelineResult.count == 2
 
   test "Aggregate pipeline without $group":
     db.put(%*{ "id": "o1", "status": "completed", "priority": 3 })
@@ -560,13 +560,13 @@ suite "NJSDB Aggregate Pipeline":
     db.put(%*{ "id": "o3", "status": "completed", "priority": 5 })
     db.put(%*{ "id": "o4", "status": "completed", "priority": 2 })
 
-    let result = db.aggregate(@[
+    let pipelineResult = db.aggregate(@[
       %*{ "$match": { "status": "completed" } },
       %*{ "$sort": { "priority": -1 } },
       %*{ "$limit": 2 }
     ])
 
-    check result.count == 2
+    check pipelineResult.count == 2
 
   test "Aggregate with complex $match filter":
     db.put(%*{ "id": "o1", "customerId": "c1", "amount": 100, "status": "completed" })
@@ -574,12 +574,12 @@ suite "NJSDB Aggregate Pipeline":
     db.put(%*{ "id": "o3", "customerId": "c2", "amount": 50, "status": "pending" })
     db.put(%*{ "id": "o4", "customerId": "c2", "amount": 300, "status": "completed" })
 
-    let result = db.aggregate(@[
+    let pipelineResult = db.aggregate(@[
       %*{ "$match": { "status": { "$ne": "pending" } } },
       %*{ "$group": { "_id": "$customerId", "total": { "$sum": "$amount" } } }
     ])
 
-    check result.count == 2
+    check pipelineResult.count == 2
 
   test "Aggregate with $count stage":
     db.put(%*{ "id": "o1", "activityId": "a1" })
@@ -587,27 +587,27 @@ suite "NJSDB Aggregate Pipeline":
     db.put(%*{ "id": "o3", "activityId": "a2" })
     db.put(%*{ "id": "o4", "activityId": "a3" })
 
-    let result = db.aggregate(@[
+    let pipelineResult = db.aggregate(@[
       %*{ "$match": { "activityId": { "$ne": "" } } },
       %*{ "$group": { "_id": "$activityId" } },
       %*{ "$count": "distinctCount" }
     ])
 
-    check result.count == 1
-    check result.data[0]["distinctCount"].getInt == 3
+    check pipelineResult.count == 1
+    check pipelineResult.data[0]["distinctCount"].getInt == 3
 
   test "Aggregate with $count stage - default field name":
     db.put(%*{ "id": "o1", "status": "completed" })
     db.put(%*{ "id": "o2", "status": "completed" })
     db.put(%*{ "id": "o3", "status": "pending" })
 
-    let result = db.aggregate(@[
+    let pipelineResult = db.aggregate(@[
       %*{ "$match": { "status": "completed" } },
       %*{ "$count": "count" }
     ])
 
-    check result.count == 1
-    check result.data[0]["count"].getInt == 2
+    check pipelineResult.count == 1
+    check pipelineResult.data[0]["count"].getInt == 2
 
 
 # Clean up test database
