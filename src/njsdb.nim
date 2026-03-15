@@ -1,5 +1,5 @@
-import std/[json, oids, strutils, sequtils]
-import db_connector/db_sqlite
+import std/[json, oids, strutils, sequtils, options]
+import tiny_sqlite
 import classes
 
 
@@ -27,6 +27,8 @@ proc toJsonPath(field: string): string =
         return field
     # Otherwise, prepend $. for dot notation
     return "$." & field
+
+
 
 
 ##
@@ -489,16 +491,15 @@ class NJSDB:
     method open(filename: string) {.gcsafe.} =
 
         # Create the database connection
-        this.conn = open(filename, "", "", "")
+        this.conn = openDatabase(filename)
 
 
     ## Close the database
     method close() {.gcsafe.} =
 
         # Close database
-        if this.conn != nil:
+        if this.conn.isOpen:
             this.conn.close()
-            this.conn = nil
 
 
     ## Select a collection (table) to work with
@@ -542,14 +543,14 @@ class NJSDB:
 
         # Create collection table if it doesn't exist
         let createTableSql = "CREATE TABLE IF NOT EXISTS " & this.currentCollection & " (id TEXT PRIMARY KEY, _json TEXT)"
-        this.conn.exec(sql createTableSql)
+        this.conn.exec(createTableSql)
 
         # Get list of all columns in the table
         let pragmaSql = "PRAGMA table_info(" & this.currentCollection & ")"
-        for row in this.conn.rows(sql pragmaSql):
+        for row in this.conn.iterate(pragmaSql):
 
             # Add to the extra columns array
-            let columnName = row[1]
+            let columnName = row[1].strVal
             if columnName == "_json": continue
             if not this.extraColumns.contains(columnName):
                 this.extraColumns.add(columnName)
@@ -561,25 +562,10 @@ class NJSDB:
         # Prepate database
         this.prepareDB()
 
-        # Start a transaction
-        this.conn.exec sql"BEGIN TRANSACTION"
-
-        # Catch errors
-        try:
-
+        # Use tiny_sqlite's transaction template
+        this.conn.transaction:
             # Execute the caller's code
             code()
-
-        except:
-
-            # Rollback the transaction
-            this.conn.exec sql"ROLLBACK TRANSACTION"
-
-            # Pass the error on to the caller
-            raise getCurrentException()
-
-        # Complete the transaction
-        this.conn.exec sql"COMMIT TRANSACTION"
 
 
     ## Start a query
@@ -610,16 +596,16 @@ class NJSDB:
 
             # Create new field on the table
             let str = "ALTER TABLE " & this.currentCollection & " ADD \"" & sqlName & "\" " & sqlType
-            this.conn.exec(sql(str))
+            this.conn.exec(str)
 
             # Fetch all existing documents ... this is heavy, but we can't iterate and modify at the same time
-            let sqlUpdateRow = sql("UPDATE " & this.currentCollection & " SET \"" & sqlName & "\" = ? WHERE id = ?")
+            let sqlUpdateRow = "UPDATE " & this.currentCollection & " SET \"" & sqlName & "\" = ? WHERE id = ?"
             let selectSql = "SELECT id, _json FROM " & this.currentCollection
-            for row in this.conn.getAllRows(sql(selectSql)):
+            for row in this.conn.all(selectSql):
 
                 # Parse this document
-                let id = row[0]
-                let json = parseJson(row[1])
+                let id = row[0].strVal
+                let json = parseJson(row[1].strVal)
 
                 # Get field value
                 let node = json{name}
@@ -685,7 +671,7 @@ class NJSDB:
         sqlStr &= ")"
 
         # Execute it
-        this.conn.exec(sql(sqlStr))
+        this.conn.exec(sqlStr)
 
         # Done, store index hash
         this.createdIndexHashes.add(indexHash)
@@ -693,7 +679,7 @@ class NJSDB:
 
 
 ## Helper: Build SQL condition for a single filter
-proc buildFilterSql(filter: NJSDBFilter, bindValues: var seq[string]): string =
+proc buildFilterSql(filter: NJSDBFilter, bindValues: var seq[DbValue]): string =
     if filter.operation == "IN":
         # Handle IN operation with multiple values
         if filter.negate:
@@ -703,11 +689,11 @@ proc buildFilterSql(filter: NJSDBFilter, bindValues: var seq[string]): string =
             result &= "CAST(json_extract(_json, ?) AS REAL) IN ("
         else:
             result &= "json_extract(_json, ?) IN ("
-        bindValues.add(filter.field.toJsonPath())
+        bindValues.add(toDbValue(filter.field.toJsonPath()))
         for i in 0 ..< filter.values.len:
             if i > 0: result &= ", "
             result &= "?"
-            bindValues.add(filter.values[i])
+            bindValues.add(toDbValue(filter.values[i]))
         result &= ")"
         if filter.negate:
             result &= ")"
@@ -720,18 +706,18 @@ proc buildFilterSql(filter: NJSDBFilter, bindValues: var seq[string]): string =
             result &= "CAST(json_extract(_json, ?) AS REAL) NOT IN ("
         else:
             result &= "json_extract(_json, ?) NOT IN ("
-        bindValues.add(filter.field.toJsonPath())
+        bindValues.add(toDbValue(filter.field.toJsonPath()))
         for i in 0 ..< filter.values.len:
             if i > 0: result &= ", "
             result &= "?"
-            bindValues.add(filter.values[i])
+            bindValues.add(toDbValue(filter.values[i]))
         result &= ")"
         if filter.negate:
             result &= ")"
     elif filter.operation == "IS NOT NULL":
         # Handle IS NOT NULL (for $not: null)
         result &= "json_extract(_json, ?) IS NOT NULL"
-        bindValues.add(filter.field.toJsonPath())
+        bindValues.add(toDbValue(filter.field.toJsonPath()))
     else:
         # For numeric comparisons, cast json_extract result to REAL
         if filter.negate:
@@ -744,14 +730,14 @@ proc buildFilterSql(filter: NJSDBFilter, bindValues: var seq[string]): string =
             result &= "CAST(json_extract(_json, ?) AS INTEGER) " & filter.operation & " CAST(? AS INTEGER)"
         else:
             result &= "json_extract(_json, ?) " & filter.operation & " ?"
-        bindValues.add(filter.field.toJsonPath())
-        bindValues.add(filter.value)
+        bindValues.add(toDbValue(filter.field.toJsonPath()))
+        bindValues.add(toDbValue(filter.value))
         if filter.negate:
             result &= ")"
 
 
 ## Helper: Build SQL condition for array filters
-proc buildArrayFilterSql(arrayFilter: NJSDBArrayFilter, bindValues: var seq[string]): string =
+proc buildArrayFilterSql(arrayFilter: NJSDBArrayFilter, bindValues: var seq[DbValue]): string =
     case arrayFilter.op:
         of aoAll:
             # $all - Array contains all specified values
@@ -759,24 +745,24 @@ proc buildArrayFilterSql(arrayFilter: NJSDBArrayFilter, bindValues: var seq[stri
             var conditions: seq[string] = @[]
             for value in arrayFilter.values:
                 conditions.add("EXISTS (SELECT 1 FROM json_each(_json, ?) WHERE value = ?)")
-                bindValues.add(arrayFilter.field.toJsonPath())
-                bindValues.add(value)
+                bindValues.add(toDbValue(arrayFilter.field.toJsonPath()))
+                bindValues.add(toDbValue(value))
             result &= conditions.join(" AND ")
         of aoSize:
             # $size - Array has specific length
             # Check if json_type is 'array' and length matches
             # Use CAST to ensure proper comparison
             result &= "json_type(json_extract(_json, ?)) = 'array' AND CAST(json_array_length(json_extract(_json, ?)) AS TEXT) = ?"
-            bindValues.add(arrayFilter.field.toJsonPath())
-            bindValues.add(arrayFilter.field.toJsonPath())
-            bindValues.add($arrayFilter.size)
+            bindValues.add(toDbValue(arrayFilter.field.toJsonPath()))
+            bindValues.add(toDbValue(arrayFilter.field.toJsonPath()))
+            bindValues.add(toDbValue($arrayFilter.size))
         of aoElemMatch:
             # $elemMatch - Not implemented yet (requires complex subquery)
             discard
 
 
 ## Helper: Build SQL condition for exists filters
-proc buildExistsFilterSql(existsFilter: NJSDBExistsFilter, bindValues: var seq[string]): string =
+proc buildExistsFilterSql(existsFilter: NJSDBExistsFilter, bindValues: var seq[DbValue]): string =
     # Note: SQLite's json_extract returns NULL for both non-existent fields AND null values
     # So $exists: true matches fields with non-null values
     # And $exists: false matches non-existent fields OR null values
@@ -786,7 +772,7 @@ proc buildExistsFilterSql(existsFilter: NJSDBExistsFilter, bindValues: var seq[s
     else:
         # Field does not exist or is null
         result &= "json_extract(_json, ?) IS NULL"
-    bindValues.add(existsFilter.field.toJsonPath())
+    bindValues.add(toDbValue(existsFilter.field.toJsonPath()))
 
 
 ## Helper: Convert MongoDB-style type names to SQLite json_type values
@@ -804,7 +790,7 @@ proc toJsonTypeName(mongoType: string): seq[string] =
 
 
 ## Helper: Build SQL condition for type filters
-proc buildTypeFilterSql(typeFilter: NJSDBTypeFilter, bindValues: var seq[string]): string =
+proc buildTypeFilterSql(typeFilter: NJSDBTypeFilter, bindValues: var seq[DbValue]): string =
     let sqliteTypes = toJsonTypeName(typeFilter.jsonType)
     if sqliteTypes.len == 0:
         return "1=1"  # Invalid type, match everything
@@ -813,16 +799,16 @@ proc buildTypeFilterSql(typeFilter: NJSDBTypeFilter, bindValues: var seq[string]
     # The latter causes "malformed JSON" errors in SQLite
     if sqliteTypes.len == 1:
         result &= "json_type(_json, ?) = ?"
-        bindValues.add(typeFilter.field.toJsonPath())
-        bindValues.add(sqliteTypes[0])
+        bindValues.add(toDbValue(typeFilter.field.toJsonPath()))
+        bindValues.add(toDbValue(sqliteTypes[0]))
     else:
         # Multiple SQLite types (e.g., number = integer OR real)
         result &= "json_type(_json, ?) IN ("
-        bindValues.add(typeFilter.field.toJsonPath())
+        bindValues.add(toDbValue(typeFilter.field.toJsonPath()))
         for i in 0 ..< sqliteTypes.len:
             if i > 0: result &= ", "
             result &= "?"
-            bindValues.add(sqliteTypes[i])
+            bindValues.add(toDbValue(sqliteTypes[i]))
         result &= ")"
 
 
@@ -862,7 +848,7 @@ proc regexToLikePattern(regexPattern: string): string =
 
 
 ## Helper: Build SQL condition for regex filters
-proc buildRegexFilterSql(regexFilter: NJSDBRegexFilter, bindValues: var seq[string]): string =
+proc buildRegexFilterSql(regexFilter: NJSDBRegexFilter, bindValues: var seq[DbValue]): string =
     # Use LIKE for basic regex support (case-insensitive with options="i")
     # GLOB is case-sensitive by default, LIKE is case-insensitive by default in SQLite
     # We use LIKE for case-insensitive, GLOB for case-sensitive
@@ -879,18 +865,18 @@ proc buildRegexFilterSql(regexFilter: NJSDBRegexFilter, bindValues: var seq[stri
         # Use GLOB (case-sensitive)
         result &= "json_extract(_json, ?) GLOB ?"
     
-    bindValues.add(regexFilter.field.toJsonPath())
-    bindValues.add(likePattern)
+    bindValues.add(toDbValue(regexFilter.field.toJsonPath()))
+    bindValues.add(toDbValue(likePattern))
 
 
 ## Execute the query and return all documents.
-proc prepareQuerySql(this: NJSDBQuery, sqlPrefix: string): (string, seq[string]) =
+proc prepareQuerySql(this: NJSDBQuery, sqlPrefix: string): (string, seq[DbValue]) =
 
     # Get database reference
     let db = cast[ptr NJSDB](this.db)[]
     
     # Build query
-    var bindValues : seq[string]
+    var bindValues : seq[DbValue]
     var sqlStr = sqlPrefix
 
     # Check if we have any filters
@@ -1104,8 +1090,8 @@ proc list*(this: NJSDBQuery): seq[JsonNode] =
     let selectPrefix = this.buildProjectionSql(db.currentCollection)
     let (sqlStr, bindValues) = prepareQuerySql(this, selectPrefix)
 
-    for row in db.conn.rows(sql(sqlStr), bindValues):
-        var doc = parseJson(row[0])
+    for row in db.conn.iterate(sqlStr, bindValues):
+        var doc = parseJson(row[0].strVal)
         # Apply in-memory projection for:
         # - Exclude mode (always done in memory)
         # - Include mode with nested fields (fall back to in-memory)
@@ -1125,10 +1111,10 @@ iterator list*(this: NJSDBQuery): JsonNode =
     let (sqlStr, bindValues) = prepareQuerySql(this, selectPrefix)
 
     # Run the query
-    for row in db.conn.rows(sql(sqlStr), bindValues):
+    for row in db.conn.iterate(sqlStr, bindValues):
 
         # Parse JSON for each result
-        var doc = parseJson(row[0])
+        var doc = parseJson(row[0].strVal)
 
         # Apply in-memory projection for:
         # - Exclude mode (always done in memory)
@@ -1156,13 +1142,13 @@ proc explain*(this: NJSDBQuery): seq[JsonNode] =
 
     # Run the explain query
     result = @[]
-    for row in db.conn.rows(sql(explainSql), bindValues):
+    for row in db.conn.iterate(explainSql, bindValues):
         # Each row contains: id, parent, notused, detail
         result.add(%*{
-            "id": parseInt(row[0]),
-            "parent": parseInt(row[1]),
-            "notused": parseInt(row[2]),
-            "detail": row[3]
+            "id": row[0].intVal.int,
+            "parent": row[1].intVal.int,
+            "notused": row[2].intVal.int,
+            "detail": row[3].strVal
         })
 
 
@@ -1177,9 +1163,9 @@ proc count*(this: NJSDBQuery): int {.discardable.} =
     let (sqlStr, bindValues) = prepareQuerySql(this, countPrefix)
 
     # Run the query and get the count
-    let countStr = db.conn.getValue(sql(sqlStr), bindValues)
-    if countStr.len > 0:
-        return parseInt(countStr)
+    let countOpt = db.conn.value(sqlStr, bindValues)
+    if countOpt.isSome:
+        return countOpt.get.intVal.int
     else:
         return 0
 
@@ -1196,7 +1182,7 @@ proc distinctValues*(this: NJSDBQuery, field: string): seq[string] {.gcsafe.} =
     
     # Build the full SQL with DISTINCT and json_extract
     var sqlStr = "SELECT DISTINCT json_extract(_json, '$.' || ?) FROM " & db.currentCollection
-    var allBindValues = @[field]
+    var allBindValues = @[toDbValue(field)]
     
     # Add WHERE clause if there are filters
     if whereSql.len > 0:
@@ -1205,9 +1191,9 @@ proc distinctValues*(this: NJSDBQuery, field: string): seq[string] {.gcsafe.} =
 
     # Run the query
     result = @[]
-    for row in db.conn.rows(sql(sqlStr), allBindValues):
-        if row[0].len > 0:
-            result.add(row[0])
+    for row in db.conn.iterate(sqlStr, allBindValues):
+        if row[0].kind == sqliteText and row[0].strVal.len > 0:
+            result.add(row[0].strVal)
 
 
 ## Delete the documents matched by this query.
@@ -1220,8 +1206,13 @@ proc delete*(this: NJSDBQuery): int {.discardable.} =
     let deletePrefix = "DELETE FROM " & db.currentCollection
     let (sqlStr, bindValues) = prepareQuerySql(this, deletePrefix)
 
-    # Run the query
-    return int db.conn.execAffectedRows(sql(sqlStr), bindValues)
+    # Run the query - tiny_sqlite doesn't have execAffectedRows, so we use exec and get changes
+    db.conn.exec(sqlStr, bindValues)
+    # Get the number of rows affected using a separate query
+    let changesOpt = db.conn.value("SELECT changes()")
+    if changesOpt.isSome:
+        return changesOpt.get.intVal.int
+    return 0
 
 
 ## Execute the query and return the first document found, or null if not found.
@@ -1351,7 +1342,7 @@ proc update*(this: NJSDBQuery, updates: JsonNode): int {.discardable.} =
     # Build the SQL expression
     # Start with _json and apply json_set for each path
     var sqlExpr = "_json"
-    var bindValues: seq[string] = @[]
+    var bindValues: seq[DbValue] = @[]
     
     # Apply $set operations
     for i in 0..<jsonSetPaths.len:
@@ -1364,36 +1355,36 @@ proc update*(this: NJSDBQuery, updates: JsonNode): int {.discardable.} =
             let incValue = parts[1]
             # Use json_extract with COALESCE for increment
             sqlExpr = "json_set(" & sqlExpr & ", ?, COALESCE(json_extract(_json, ?), 0) + " & incValue & ")"
-            bindValues.add(jsonPath)
-            bindValues.add(jsonPath)
+            bindValues.add(toDbValue(jsonPath))
+            bindValues.add(toDbValue(jsonPath))
         elif "||MUL||" in path:
             let parts = path.split("||MUL||")
             let jsonPath = parts[0]
             let mulValue = parts[1]
             # Use json_extract with COALESCE for multiply
             sqlExpr = "json_set(" & sqlExpr & ", ?, COALESCE(json_extract(_json, ?), 0) * " & mulValue & ")"
-            bindValues.add(jsonPath)
-            bindValues.add(jsonPath)
+            bindValues.add(toDbValue(jsonPath))
+            bindValues.add(toDbValue(jsonPath))
         else:
             # Regular $set operation - use parameter for value
             sqlExpr = "json_set(" & sqlExpr & ", ?, json(?))"
-            bindValues.add(path)
-            bindValues.add(jsonSetValues[i])
+            bindValues.add(toDbValue(path))
+            bindValues.add(toDbValue(jsonSetValues[i]))
     
     # Apply $unset operations (json_remove)
     for unsetPath in unsetPaths:
         sqlExpr = "json_remove(" & sqlExpr & ", ?)"
-        bindValues.add(unsetPath)
+        bindValues.add(toDbValue(unsetPath))
     
     # Apply $rename operations
     for renameOp in renameOps:
         # First copy: json_set(..., '$.new', json_extract(_json, '$.old'))
         sqlExpr = "json_set(" & sqlExpr & ", ?, json_extract(_json, ?))"
-        bindValues.add(renameOp.newPath)
-        bindValues.add(renameOp.oldPath)
+        bindValues.add(toDbValue(renameOp.newPath))
+        bindValues.add(toDbValue(renameOp.oldPath))
         # Then remove: json_remove(..., '$.old')
         sqlExpr = "json_remove(" & sqlExpr & ", ?)"
-        bindValues.add(renameOp.oldPath)
+        bindValues.add(toDbValue(renameOp.oldPath))
 
     # Build the full SQL
     var sqlStr = "UPDATE " & db.currentCollection & " SET _json = " & sqlExpr
@@ -1407,11 +1398,16 @@ proc update*(this: NJSDBQuery, updates: JsonNode): int {.discardable.} =
             addedFirst = true
             
             sqlStr &= "json_extract(_json, '$.' || ?) " & filter.operation & " ?"
-            bindValues.add(filter.field)
-            bindValues.add(filter.value)
+            bindValues.add(toDbValue(filter.field))
+            bindValues.add(toDbValue(filter.value))
     
     # Execute the query with all bind values
-    return int db.conn.execAffectedRows(sql(sqlStr), bindValues)
+    db.conn.exec(sqlStr, bindValues)
+    # Get the number of rows affected using a separate query
+    let changesOpt = db.conn.value("SELECT changes()")
+    if changesOpt.isSome:
+        return changesOpt.get.intVal.int
+    return 0
 
 
 ## Helper: Update a document with the specified ID. Returns true if a document was updated.
@@ -1456,7 +1452,7 @@ proc aggregate*(this: NJSDB, groupField: string, aggregations: JsonNode, matchFi
         "json_extract(_json, '$.' || ?) as _id",  # Group by field
         "COUNT(*) as count"
     ]
-    var allBindValues = @[groupField]
+    var allBindValues: seq[DbValue] = @[toDbValue(groupField)]
     
     # Parse aggregation operators
     var hasSum = false
@@ -1473,25 +1469,25 @@ proc aggregate*(this: NJSDB, groupField: string, aggregations: JsonNode, matchFi
             hasSum = true
             sumField = aggregations["$sum"].getStr()
             selectFields.add("SUM(CAST(json_extract(_json, '$.' || ?) AS REAL)) as sum_val")
-            allBindValues.add(sumField)
+            allBindValues.add(toDbValue(sumField))
         
         if "$avg" in aggregations:
             hasAvg = true
             avgField = aggregations["$avg"].getStr()
             selectFields.add("AVG(CAST(json_extract(_json, '$.' || ?) AS REAL)) as avg_val")
-            allBindValues.add(avgField)
+            allBindValues.add(toDbValue(avgField))
         
         if "$min" in aggregations:
             hasMin = true
             minField = aggregations["$min"].getStr()
             selectFields.add("MIN(CAST(json_extract(_json, '$.' || ?) AS REAL)) as min_val")
-            allBindValues.add(minField)
+            allBindValues.add(toDbValue(minField))
         
         if "$max" in aggregations:
             hasMax = true
             maxField = aggregations["$max"].getStr()
             selectFields.add("MAX(CAST(json_extract(_json, '$.' || ?) AS REAL)) as max_val")
-            allBindValues.add(maxField)
+            allBindValues.add(toDbValue(maxField))
     
     # Build full SQL
     var sqlStr = "SELECT " & selectFields.join(", ") & " FROM " & this.currentCollection
@@ -1503,35 +1499,35 @@ proc aggregate*(this: NJSDB, groupField: string, aggregations: JsonNode, matchFi
     
     # Add GROUP BY
     sqlStr &= " GROUP BY json_extract(_json, '$.' || ?)"
-    allBindValues.add(groupField)
+    allBindValues.add(toDbValue(groupField))
     
     # Execute query
     result = @[]
     var colIndex = 0
-    for row in this.conn.rows(sql(sqlStr), allBindValues):
+    for row in this.conn.iterate(sqlStr, allBindValues):
         colIndex = 0
         var res = AggregateResult()
-        res.groupId = row[colIndex]; colIndex += 1
-        res.count = parseInt(row[colIndex]); colIndex += 1
+        res.groupId = row[colIndex].strVal; colIndex += 1
+        res.count = row[colIndex].intVal.int; colIndex += 1
         
         if hasSum:
-            if row[colIndex].len > 0:
-                res.sum = parseFloat(row[colIndex])
+            if row[colIndex].kind == sqliteReal or row[colIndex].kind == sqliteInteger:
+                res.sum = row[colIndex].floatVal
             colIndex += 1
         
         if hasAvg:
-            if row[colIndex].len > 0:
-                res.avg = parseFloat(row[colIndex])
+            if row[colIndex].kind == sqliteReal or row[colIndex].kind == sqliteInteger:
+                res.avg = row[colIndex].floatVal
             colIndex += 1
         
         if hasMin:
-            if row[colIndex].len > 0:
-                res.min = parseFloat(row[colIndex])
+            if row[colIndex].kind == sqliteReal or row[colIndex].kind == sqliteInteger:
+                res.min = row[colIndex].floatVal
             colIndex += 1
         
         if hasMax:
-            if row[colIndex].len > 0:
-                res.max = parseFloat(row[colIndex])
+            if row[colIndex].kind == sqliteReal or row[colIndex].kind == sqliteInteger:
+                res.max = row[colIndex].floatVal
             colIndex += 1
         
         result.add(res)
@@ -1560,10 +1556,9 @@ proc writeDocument(this: NJSDB, document: JsonNode) =
 
     # Create query including all fields
     let str = "INSERT OR REPLACE INTO " & this.currentCollection & " (_json, " & this.extraColumns.join(", ") & ") VALUES (?, " & this.extraColumns.mapIt("?").join(", ") & ")"
-    let cmd = sql(str)
 
     # First field is the JSON content
-    var args = @[ $docCopy ]
+    var args: seq[DbValue] = @[ toDbValue($docCopy) ]
 
     # Add fields for the extra columns
     for columnName in this.extraColumns:
@@ -1572,10 +1567,10 @@ proc writeDocument(this: NJSDB, document: JsonNode) =
         let fieldName = if columnName == "id": "id" else: columnName.substr(0, columnName.len - 6)
 
         # Add it
-        args.add docCopy{fieldName}.getStr()
+        args.add toDbValue(docCopy{fieldName}.getStr())
 
     # Bind and execute the query
-    this.conn.exec(cmd, args)
+    this.conn.exec(str, args)
 
 
 ## Put a new document into the database, merging the fields if it already exists
@@ -1811,7 +1806,7 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
     
     # Build SQL based on whether we have grouping
     var sqlStr = ""
-    var allBindValues: seq[string] = @[]
+    var allBindValues: seq[DbValue] = @[]
     
     if groupField.len > 0:
         # Aggregation query with GROUP BY
@@ -1819,7 +1814,7 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
             "json_extract(_json, '$.' || ?) as _id",
             "COUNT(*) as count"
         ]
-        allBindValues.add(groupField)
+        allBindValues.add(toDbValue(groupField))
         
         # Parse aggregation operators
         var hasSum = false
@@ -1847,14 +1842,14 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
                             if sumField.startsWith("$"):
                                 sumField = sumField.substr(1)
                             selectFields.add("SUM(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
-                            allBindValues.add(sumField)
+                            allBindValues.add(toDbValue(sumField))
                         elif sumVal.kind == JInt and sumVal.getInt() == 1:
                             # $sum: 1 means count - use COUNT(*) instead
                             selectFields.add("COUNT(*) as " & alias)
                         else:
                             # Other numeric sum
                             selectFields.add("SUM(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
-                            allBindValues.add(sumField)
+                            allBindValues.add(toDbValue(sumField))
                     if "$avg" in aggDef:
                         hasAvg = true
                         avgAlias = alias
@@ -1864,7 +1859,7 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
                             if avgField.startsWith("$"):
                                 avgField = avgField.substr(1)
                         selectFields.add("AVG(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
-                        allBindValues.add(avgField)
+                        allBindValues.add(toDbValue(avgField))
                     if "$min" in aggDef:
                         hasMin = true
                         minAlias = alias
@@ -1874,7 +1869,7 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
                             if minField.startsWith("$"):
                                 minField = minField.substr(1)
                         selectFields.add("MIN(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
-                        allBindValues.add(minField)
+                        allBindValues.add(toDbValue(minField))
                     if "$max" in aggDef:
                         hasMax = true
                         maxAlias = alias
@@ -1884,7 +1879,7 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
                             if maxField.startsWith("$"):
                                 maxField = maxField.substr(1)
                         selectFields.add("MAX(CAST(json_extract(_json, '$.' || ?) AS REAL)) as " & alias)
-                        allBindValues.add(maxField)
+                        allBindValues.add(toDbValue(maxField))
         
         sqlStr = "SELECT " & selectFields.join(", ") & " FROM " & this.currentCollection
         
@@ -1895,7 +1890,7 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
         
         # Add GROUP BY
         sqlStr &= " GROUP BY json_extract(_json, '$.' || ?)"
-        allBindValues.add(groupField)
+        allBindValues.add(toDbValue(groupField))
         
         # Add ORDER BY for sorting
         if sortField.len > 0:
@@ -1910,31 +1905,31 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
         
         # Execute aggregation query
         result.data = @[]
-        for row in this.conn.rows(sql(sqlStr), allBindValues):
+        for row in this.conn.iterate(sqlStr, allBindValues):
             var doc = newJObject()
-            doc["_id"] = %row[0]
-            doc["count"] = %parseInt(row[1])
+            doc["_id"] = %row[0].strVal
+            doc["count"] = %row[1].intVal.int
             
             var colIdx = 2
             if hasSum:
-                if row[colIdx].len > 0:
+                if row[colIdx].kind == sqliteReal or row[colIdx].kind == sqliteInteger:
                     # Check if this was a $sum: 1 (count) or actual sum
                     if sumField.len > 0:
-                        doc[sumAlias] = %parseFloat(row[colIdx])
+                        doc[sumAlias] = %row[colIdx].floatVal
                     else:
-                        doc[sumAlias] = %parseInt(row[colIdx])
+                        doc[sumAlias] = %row[colIdx].intVal.int
                 colIdx += 1
             if hasAvg:
-                if row[colIdx].len > 0:
-                    doc[avgAlias] = %parseFloat(row[colIdx])
+                if row[colIdx].kind == sqliteReal or row[colIdx].kind == sqliteInteger:
+                    doc[avgAlias] = %row[colIdx].floatVal
                 colIdx += 1
             if hasMin:
-                if row[colIdx].len > 0:
-                    doc[minAlias] = %parseFloat(row[colIdx])
+                if row[colIdx].kind == sqliteReal or row[colIdx].kind == sqliteInteger:
+                    doc[minAlias] = %row[colIdx].floatVal
                 colIdx += 1
             if hasMax:
-                if row[colIdx].len > 0:
-                    doc[maxAlias] = %parseFloat(row[colIdx])
+                if row[colIdx].kind == sqliteReal or row[colIdx].kind == sqliteInteger:
+                    doc[maxAlias] = %row[colIdx].floatVal
                 colIdx += 1
             
             result.data.add(doc)
@@ -1952,7 +1947,7 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
         if sortField.len > 0:
             let sortDir = if sortAscending: "ASC" else: "DESC"
             sqlStr &= " ORDER BY json_extract(_json, '$.' || ?) " & sortDir
-            allBindValues.add(sortField)
+            allBindValues.add(toDbValue(sortField))
         
         # Add LIMIT and OFFSET
         if limitVal > 0:
@@ -1962,8 +1957,8 @@ proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {
         
         # Execute query
         result.data = @[]
-        for row in this.conn.rows(sql(sqlStr), allBindValues):
-            var doc = row[0].parseJson()
+        for row in this.conn.iterate(sqlStr, allBindValues):
+            var doc = row[0].strVal.parseJson()
             result.data.add(doc)
     
     # Handle $count stage - return a single document with the count

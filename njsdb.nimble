@@ -11,7 +11,7 @@ srcDir        = "src"
 
 requires "nim >= 2.0.0"
 requires "classes >= 0.3.17"
-requires "db_connector >= 0.1.0"
+requires "tiny_sqlite >= 0.2.0"
 
 
 # Test configuration
