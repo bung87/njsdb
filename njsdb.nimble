@@ -10,7 +10,6 @@ srcDir        = "src"
 # Dependencies
 
 requires "nim >= 2.0.0"
-requires "classes >= 0.3.17"
 requires "tiny_sqlite >= 0.2.0"
 
 

@@ -1,6 +1,5 @@
 import std/[json, oids, strutils, sequtils, options]
 import tiny_sqlite
-import classes
 
 
 ##
@@ -44,52 +43,52 @@ type ArrayOp = enum
 
 ##
 ## Query filter info for a single condition
-class NJSDBFilter:
-    var field = ""
-    var operation = ""
-    var value = ""
-    var values: seq[string] = @[]  # For IN operations
-    var fieldIsNumber = false
-    var fieldIsBoolean = false  # For boolean comparisons
-    var negate = false  # For $not operator (negate this filter)
+type NJSDBFilter* = object
+    field*: string
+    operation*: string
+    value*: string
+    values*: seq[string]  # For IN operations
+    fieldIsNumber*: bool
+    fieldIsBoolean*: bool  # For boolean comparisons
+    negate*: bool  # For $not operator (negate this filter)
 
 ##
 ## Logical filter group for $and/$or operations
-class NJSDBLogicalFilter:
-    var op: LogicalOp
-    var filters: seq[NJSDBFilter]
+type NJSDBLogicalFilter* = object
+    op*: LogicalOp
+    filters*: seq[NJSDBFilter]
 
 ##
 ## Not filter for $not operator
-class NJSDBNotFilter:
-    var filter: NJSDBFilter
+type NJSDBNotFilter* = object
+    filter*: NJSDBFilter
 
 ##
 ## Array filter for array operations ($all, $size)
-class NJSDBArrayFilter:
-    var field = ""
-    var op: ArrayOp
-    var values: seq[string] = @[]  # For $all operation
-    var size = 0  # For $size operation
+type NJSDBArrayFilter* = object
+    field*: string
+    op*: ArrayOp
+    values*: seq[string]  # For $all operation
+    size*: int  # For $size operation
 
 ##
 ## Exists filter for $exists operator
-class NJSDBExistsFilter:
-    var field = ""
-    var exists = true  # true = field exists, false = field does not exist
+type NJSDBExistsFilter* = object
+    field*: string
+    exists*: bool  # true = field exists, false = field does not exist
 
 ##
 ## Type filter for $type operator
-class NJSDBTypeFilter:
-    var field = ""
-    var jsonType = ""  # "string", "number", "boolean", "array", "object", "null"
+type NJSDBTypeFilter* = object
+    field*: string
+    jsonType*: string  # "string", "number", "boolean", "array", "object", "null"
 
 ##
 ## Regex filter for $regex operator
-class NJSDBRegexFilter:
-    var field = ""
-    var pattern = ""
-    var options = ""  # "i" for case-insensitive (using GLOB)
+type NJSDBRegexFilter* = object
+    field*: string
+    pattern*: string
+    options*: string  # "i" for case-insensitive (using GLOB)
 
 
 ##
@@ -104,577 +103,603 @@ proc validateWhereParams(field, operation: string) {.inline.} =
 
 ##
 ## Query builder
-class NJSDBQuery:
-
+type NJSDBQuery* = object
     ## Reference to the database
     ## Note: Using pointer to avoid circular dependency with NJSDB
     ## The query() method allocates a stable copy of NJSDB on the heap
-    var db: pointer
+    db*: pointer
 
     ## List of filters
-    var filters : seq[NJSDBFilter]
+    filters*: seq[NJSDBFilter]
 
     ## List of logical filter groups ($and, $or)
-    var logicalFilters: seq[NJSDBLogicalFilter]
+    logicalFilters*: seq[NJSDBLogicalFilter]
 
     ## List of not filters ($not)
-    var notFilters: seq[NJSDBNotFilter]
+    notFilters*: seq[NJSDBNotFilter]
 
     ## List of array filters ($all, $size)
-    var arrayFilters: seq[NJSDBArrayFilter]
+    arrayFilters*: seq[NJSDBArrayFilter]
 
     ## List of exists filters ($exists)
-    var existsFilters: seq[NJSDBExistsFilter]
+    existsFilters*: seq[NJSDBExistsFilter]
 
     ## List of type filters ($type)
-    var typeFilters: seq[NJSDBTypeFilter]
+    typeFilters*: seq[NJSDBTypeFilter]
 
     ## List of regex filters ($regex)
-    var regexFilters: seq[NJSDBRegexFilter]
+    regexFilters*: seq[NJSDBRegexFilter]
 
     ## Projection fields (field selection)
-    var projection: JsonNode = nil  # nil means no projection (return all fields)
-    var projectionInclude = true    # true = include specified fields, false = exclude specified fields
+    projection*: JsonNode  # nil means no projection (return all fields)
+    projectionInclude*: bool    # true = include specified fields, false = exclude specified fields
 
     ## Sort field
-    var sortField = ""
-    var sortAscending = true
-    var sortIsNumber = true
+    sortField*: string
+    sortAscending*: bool
+    sortIsNumber*: bool
 
     ## Limit
-    var pLimit = -1
+    pLimit*: int
 
     ## Offset
-    var pOffset = 0
+    pOffset*: int
 
-    ## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
-    method where(field: string, operation: string, value: string): NJSDBQuery {.gcsafe.} =
-        validateWhereParams(field, operation)
-        let filter = NJSDBFilter(field: field, operation: operation, value: value, fieldIsNumber: false)
-        this.filters.add(filter)
-        return this
+## Initialize a new NJSDBQuery
+proc initNJSDBQuery*(): NJSDBQuery =
+    result.db = nil
+    result.filters = @[]
+    result.logicalFilters = @[]
+    result.notFilters = @[]
+    result.arrayFilters = @[]
+    result.existsFilters = @[]
+    result.typeFilters = @[]
+    result.regexFilters = @[]
+    result.projection = nil
+    result.projectionInclude = true
+    result.sortField = ""
+    result.sortAscending = true
+    result.sortIsNumber = true
+    result.pLimit = -1
+    result.pOffset = 0
 
-    ## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
-    method where(field: string, operation: string, value: float): NJSDBQuery {.gcsafe.} =
-        validateWhereParams(field, operation)
-        let filter = NJSDBFilter(field: field, operation: operation, value: $value, fieldIsNumber: true)
-        this.filters.add(filter)
-        return this
-    
+## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
+proc where*(this: var NJSDBQuery, field: string, operation: string, value: string): var NJSDBQuery {.gcsafe.} =
+    validateWhereParams(field, operation)
+    let filter = NJSDBFilter(field: field, operation: operation, value: value, fieldIsNumber: false)
+    this.filters.add(filter)
+    return this
 
-    ## (chainable) Add a filter from a JsonNode filter object (supports MongoDB-style $in)
-    method filter(filterObj: JsonNode): NJSDBQuery {.gcsafe.} =
+## (chainable) Add a filter. Operation is one of: `==` `!=` `<` `<=` `>` `>=`
+proc where*(this: var NJSDBQuery, field: string, operation: string, value: float): var NJSDBQuery {.gcsafe.} =
+    validateWhereParams(field, operation)
+    let filter = NJSDBFilter(field: field, operation: operation, value: $value, fieldIsNumber: true)
+    this.filters.add(filter)
+    return this
 
-        # Check input
-        if filterObj == nil or filterObj.kind != JObject:
-            raise newException(ValidationError, "Filter must be a JSON object")
 
-        # Helper to convert JsonNode to string value
-        proc jsonToString(node: JsonNode): string =
-            case node.kind:
-                of JString: return node.getStr()
-                of JInt: return $node.getInt()
-                of JFloat: return $node.getFloat()
-                of JBool: return $node.getBool()
-                else: return $node
+## (chainable) Add a filter from a JsonNode filter object (supports MongoDB-style $in)
+proc filter*(this: var NJSDBQuery, filterObj: JsonNode): var NJSDBQuery {.gcsafe.} =
 
-        # Helper to process a single field condition and return a filter
-        proc processCondition(field: string, val: JsonNode): NJSDBFilter =
-            if val.kind == JObject:
-                # Check for MongoDB-style operators like $in
-                if "$in" in val:
-                    let inValues = val["$in"]
-                    if inValues.kind == JArray and inValues.len > 0:
-                        var values: seq[string] = @[]
-                        var isNum = false
-                        for v in inValues:
-                            values.add(jsonToString(v))
-                            if v.kind == JInt or v.kind == JFloat:
-                                isNum = true
-                        return NJSDBFilter(field: field, operation: "IN", values: values, fieldIsNumber: isNum)
-                elif "$nin" in val:
-                    let ninValues = val["$nin"]
-                    if ninValues.kind == JArray and ninValues.len > 0:
-                        var values: seq[string] = @[]
-                        var isNum = false
-                        for v in ninValues:
-                            values.add(jsonToString(v))
-                            if v.kind == JInt or v.kind == JFloat:
-                                isNum = true
-                        return NJSDBFilter(field: field, operation: "NOT IN", values: values, fieldIsNumber: isNum)
-                elif "$eq" in val:
-                    let eqVal = val["$eq"]
-                    let isNum = eqVal.kind == JInt or eqVal.kind == JFloat
-                    return NJSDBFilter(field: field, operation: "==", value: jsonToString(eqVal), fieldIsNumber: isNum)
-                elif "$ne" in val:
-                    let neVal = val["$ne"]
-                    let isNum = neVal.kind == JInt or neVal.kind == JFloat
-                    return NJSDBFilter(field: field, operation: "!=", value: jsonToString(neVal), fieldIsNumber: isNum)
-                elif "$gt" in val:
-                    let gtVal = val["$gt"]
-                    let isNum = gtVal.kind == JInt or gtVal.kind == JFloat
-                    return NJSDBFilter(field: field, operation: ">", value: jsonToString(gtVal), fieldIsNumber: isNum)
-                elif "$gte" in val:
-                    let gteVal = val["$gte"]
-                    let isNum = gteVal.kind == JInt or gteVal.kind == JFloat
-                    return NJSDBFilter(field: field, operation: ">=", value: jsonToString(gteVal), fieldIsNumber: isNum)
-                elif "$lt" in val:
-                    let ltVal = val["$lt"]
-                    let isNum = ltVal.kind == JInt or ltVal.kind == JFloat
-                    return NJSDBFilter(field: field, operation: "<", value: jsonToString(ltVal), fieldIsNumber: isNum)
-                elif "$lte" in val:
-                    let lteVal = val["$lte"]
-                    let isNum = lteVal.kind == JInt or lteVal.kind == JFloat
-                    return NJSDBFilter(field: field, operation: "<=", value: jsonToString(lteVal), fieldIsNumber: isNum)
-                elif "$not" in val:
-                    # $not operator - negate the inner condition
-                    let notVal = val["$not"]
-                    if notVal.kind == JObject:
-                        # Process the inner condition and negate it
-                        var innerFilter = processCondition(field, notVal)
-                        if innerFilter.field.len > 0:
-                            innerFilter.negate = true
-                            return innerFilter
-                    elif notVal.kind == JBool:
-                        # $not: true means field should not exist or be false
-                        # $not: false means field should exist and be true
-                        let boolValue = if notVal.getBool(): "0" else: "1"
-                        return NJSDBFilter(field: field, operation: "==", value: boolValue, fieldIsNumber: true, fieldIsBoolean: true, negate: true)
-                    elif notVal.kind == JNull:
-                        # $not: null means field should exist and not be null
-                        return NJSDBFilter(field: field, operation: "IS NOT NULL", value: "", fieldIsNumber: false, negate: false)
-                    else:
-                        # $not: value means field != value
-                        let isNum = notVal.kind == JInt or notVal.kind == JFloat
-                        return NJSDBFilter(field: field, operation: "!=", value: jsonToString(notVal), fieldIsNumber: isNum)
-            elif val.kind == JString:
-                return NJSDBFilter(field: field, operation: "==", value: val.getStr(), fieldIsNumber: false)
-            elif val.kind == JInt or val.kind == JFloat:
-                return NJSDBFilter(field: field, operation: "==", value: $val, fieldIsNumber: true)
-            elif val.kind == JBool:
-                # SQLite stores booleans as integers (1/0)
-                let boolValue = if val.getBool(): "1" else: "0"
-                return NJSDBFilter(field: field, operation: "==", value: boolValue, fieldIsNumber: true, fieldIsBoolean: true)
+    # Check input
+    if filterObj == nil or filterObj.kind != JObject:
+        raise newException(ValidationError, "Filter must be a JSON object")
 
-            return NJSDBFilter()
+    # Helper to convert JsonNode to string value
+    proc jsonToString(node: JsonNode): string =
+        case node.kind:
+            of JString: return node.getStr()
+            of JInt: return $node.getInt()
+            of JFloat: return $node.getFloat()
+            of JBool: return $node.getBool()
+            else: return $node
 
-        # Check for $or operator
-        if "$or" in filterObj:
-            let orArray = filterObj["$or"]
-            if orArray.kind == JArray:
-                var orFilters: seq[NJSDBFilter] = @[]
-                for item in orArray:
-                    if item.kind == JObject and item.len > 0:
-                        # Get the first (and typically only) field from the object
-                        for field, val in item:
-                            let f = processCondition(field, val)
-                            if f.field.len > 0:
-                                orFilters.add(f)
-                            break
-                if orFilters.len > 0:
-                    let logicalFilter = NJSDBLogicalFilter(op: loOr, filters: orFilters)
-                    this.logicalFilters.add(logicalFilter)
+    # Helper to process a single field condition and return a filter
+    proc processCondition(field: string, val: JsonNode): NJSDBFilter =
+        if val.kind == JObject:
+            # Check for MongoDB-style operators like $in
+            if "$in" in val:
+                let inValues = val["$in"]
+                if inValues.kind == JArray and inValues.len > 0:
+                    var values: seq[string] = @[]
+                    var isNum = false
+                    for v in inValues:
+                        values.add(jsonToString(v))
+                        if v.kind == JInt or v.kind == JFloat:
+                            isNum = true
+                    return NJSDBFilter(field: field, operation: "IN", values: values, fieldIsNumber: isNum)
+            elif "$nin" in val:
+                let ninValues = val["$nin"]
+                if ninValues.kind == JArray and ninValues.len > 0:
+                    var values: seq[string] = @[]
+                    var isNum = false
+                    for v in ninValues:
+                        values.add(jsonToString(v))
+                        if v.kind == JInt or v.kind == JFloat:
+                            isNum = true
+                    return NJSDBFilter(field: field, operation: "NOT IN", values: values, fieldIsNumber: isNum)
+            elif "$eq" in val:
+                let eqVal = val["$eq"]
+                let isNum = eqVal.kind == JInt or eqVal.kind == JFloat
+                return NJSDBFilter(field: field, operation: "==", value: jsonToString(eqVal), fieldIsNumber: isNum)
+            elif "$ne" in val:
+                let neVal = val["$ne"]
+                let isNum = neVal.kind == JInt or neVal.kind == JFloat
+                return NJSDBFilter(field: field, operation: "!=", value: jsonToString(neVal), fieldIsNumber: isNum)
+            elif "$gt" in val:
+                let gtVal = val["$gt"]
+                let isNum = gtVal.kind == JInt or gtVal.kind == JFloat
+                return NJSDBFilter(field: field, operation: ">", value: jsonToString(gtVal), fieldIsNumber: isNum)
+            elif "$gte" in val:
+                let gteVal = val["$gte"]
+                let isNum = gteVal.kind == JInt or gteVal.kind == JFloat
+                return NJSDBFilter(field: field, operation: ">=", value: jsonToString(gteVal), fieldIsNumber: isNum)
+            elif "$lt" in val:
+                let ltVal = val["$lt"]
+                let isNum = ltVal.kind == JInt or ltVal.kind == JFloat
+                return NJSDBFilter(field: field, operation: "<", value: jsonToString(ltVal), fieldIsNumber: isNum)
+            elif "$lte" in val:
+                let lteVal = val["$lte"]
+                let isNum = lteVal.kind == JInt or lteVal.kind == JFloat
+                return NJSDBFilter(field: field, operation: "<=", value: jsonToString(lteVal), fieldIsNumber: isNum)
+            elif "$not" in val:
+                # $not operator - negate the inner condition
+                let notVal = val["$not"]
+                if notVal.kind == JObject:
+                    # Process the inner condition and negate it
+                    var innerFilter = processCondition(field, notVal)
+                    if innerFilter.field.len > 0:
+                        innerFilter.negate = true
+                        return innerFilter
+                elif notVal.kind == JBool:
+                    # $not: true means field should not exist or be false
+                    # $not: false means field should exist and be true
+                    let boolValue = if notVal.getBool(): "0" else: "1"
+                    return NJSDBFilter(field: field, operation: "==", value: boolValue, fieldIsNumber: true, fieldIsBoolean: true, negate: true)
+                elif notVal.kind == JNull:
+                    # $not: null means field should exist and not be null
+                    return NJSDBFilter(field: field, operation: "IS NOT NULL", value: "", fieldIsNumber: false, negate: false)
+                else:
+                    # $not: value means field != value
+                    let isNum = notVal.kind == JInt or notVal.kind == JFloat
+                    return NJSDBFilter(field: field, operation: "!=", value: jsonToString(notVal), fieldIsNumber: isNum)
+        elif val.kind == JString:
+            return NJSDBFilter(field: field, operation: "==", value: val.getStr(), fieldIsNumber: false)
+        elif val.kind == JInt or val.kind == JFloat:
+            return NJSDBFilter(field: field, operation: "==", value: $val, fieldIsNumber: true)
+        elif val.kind == JBool:
+            # SQLite stores booleans as integers (1/0)
+            let boolValue = if val.getBool(): "1" else: "0"
+            return NJSDBFilter(field: field, operation: "==", value: boolValue, fieldIsNumber: true, fieldIsBoolean: true)
 
-        # Check for $and operator
-        if "$and" in filterObj:
-            let andArray = filterObj["$and"]
-            if andArray.kind == JArray:
-                var andFilters: seq[NJSDBFilter] = @[]
-                for item in andArray:
-                    if item.kind == JObject and item.len > 0:
-                        for field, val in item:
-                            let f = processCondition(field, val)
-                            if f.field.len > 0:
-                                andFilters.add(f)
-                            break
-                if andFilters.len > 0:
-                    let logicalFilter = NJSDBLogicalFilter(op: loAnd, filters: andFilters)
-                    this.logicalFilters.add(logicalFilter)
+        return NJSDBFilter()
 
-        # Check for $nor operator
-        if "$nor" in filterObj:
-            let norArray = filterObj["$nor"]
-            if norArray.kind == JArray:
-                var norFilters: seq[NJSDBFilter] = @[]
-                for item in norArray:
-                    if item.kind == JObject and item.len > 0:
-                        for field, val in item:
-                            let f = processCondition(field, val)
-                            if f.field.len > 0:
-                                norFilters.add(f)
-                            break
-                if norFilters.len > 0:
-                    # $nor is equivalent to NOT ($or(...))
-                    let logicalFilter = NJSDBLogicalFilter(op: loNor, filters: norFilters)
-                    this.logicalFilters.add(logicalFilter)
+    # Check for $or operator
+    if "$or" in filterObj:
+        let orArray = filterObj["$or"]
+        if orArray.kind == JArray:
+            var orFilters: seq[NJSDBFilter] = @[]
+            for item in orArray:
+                if item.kind == JObject and item.len > 0:
+                    # Get the first (and typically only) field from the object
+                    for field, val in item:
+                        let f = processCondition(field, val)
+                        if f.field.len > 0:
+                            orFilters.add(f)
+                        break
+            if orFilters.len > 0:
+                let logicalFilter = NJSDBLogicalFilter(op: loOr, filters: orFilters)
+                this.logicalFilters.add(logicalFilter)
 
-        # Check for $not operator (field-level negation)
-        # $not can be used like: { field: { $not: { $gt: 5 } } }
-        # or: { field: { $not: { $in: [1, 2, 3] } } }
+    # Check for $and operator
+    if "$and" in filterObj:
+        let andArray = filterObj["$and"]
+        if andArray.kind == JArray:
+            var andFilters: seq[NJSDBFilter] = @[]
+            for item in andArray:
+                if item.kind == JObject and item.len > 0:
+                    for field, val in item:
+                        let f = processCondition(field, val)
+                        if f.field.len > 0:
+                            andFilters.add(f)
+                        break
+            if andFilters.len > 0:
+                let logicalFilter = NJSDBLogicalFilter(op: loAnd, filters: andFilters)
+                this.logicalFilters.add(logicalFilter)
 
-        # Check for array operators and $exists in field conditions
-        for field, val in filterObj:
-            if field == "$or" or field == "$and" or field == "$nor":
+    # Check for $nor operator
+    if "$nor" in filterObj:
+        let norArray = filterObj["$nor"]
+        if norArray.kind == JArray:
+            var norFilters: seq[NJSDBFilter] = @[]
+            for item in norArray:
+                if item.kind == JObject and item.len > 0:
+                    for field, val in item:
+                        let f = processCondition(field, val)
+                        if f.field.len > 0:
+                            norFilters.add(f)
+                        break
+            if norFilters.len > 0:
+                # $nor is equivalent to NOT ($or(...))
+                let logicalFilter = NJSDBLogicalFilter(op: loNor, filters: norFilters)
+                this.logicalFilters.add(logicalFilter)
+
+    # Check for $not operator (field-level negation)
+    # $not can be used like: { field: { $not: { $gt: 5 } } }
+    # or: { field: { $not: { $in: [1, 2, 3] } } }
+
+    # Check for array operators and $exists in field conditions
+    for field, val in filterObj:
+        if field == "$or" or field == "$and" or field == "$nor":
+            continue
+        
+        # Check for array operators and $exists
+        if val.kind == JObject:
+            var processedSpecialOp = false
+            
+            # Check for $all operator
+            if "$all" in val:
+                let allValues = val["$all"]
+                if allValues.kind == JArray and allValues.len > 0:
+                    var values: seq[string] = @[]
+                    for v in allValues:
+                        values.add(jsonToString(v))
+                    let arrayFilter = NJSDBArrayFilter(field: field, op: aoAll, values: values)
+                    this.arrayFilters.add(arrayFilter)
+                processedSpecialOp = true
+            
+            # Check for $size operator
+            if "$size" in val:
+                let sizeVal = val["$size"]
+                if sizeVal.kind == JInt:
+                    let arrayFilter = NJSDBArrayFilter(field: field, op: aoSize, size: sizeVal.getInt())
+                    this.arrayFilters.add(arrayFilter)
+                processedSpecialOp = true
+            
+            # Check for $exists operator
+            if "$exists" in val:
+                let existsVal = val["$exists"]
+                if existsVal.kind == JBool:
+                    let existsFilter = NJSDBExistsFilter(field: field, exists: existsVal.getBool())
+                    this.existsFilters.add(existsFilter)
+                processedSpecialOp = true
+            
+            # Check for $type operator
+            if "$type" in val:
+                let typeVal = val["$type"]
+                if typeVal.kind == JString:
+                    let typeFilter = NJSDBTypeFilter(field: field, jsonType: typeVal.getStr())
+                    this.typeFilters.add(typeFilter)
+                processedSpecialOp = true
+            
+            # Check for $regex operator
+            if "$regex" in val:
+                let regexVal = val["$regex"]
+                var pattern = ""
+                var options = ""
+                
+                if regexVal.kind == JString:
+                    pattern = regexVal.getStr()
+                elif regexVal.kind == JObject:
+                    if "$regex" in regexVal:
+                        let patNode = regexVal["$regex"]
+                        if patNode.kind == JString:
+                            pattern = patNode.getStr()
+                    if "$options" in regexVal:
+                        let optNode = regexVal["$options"]
+                        if optNode.kind == JString:
+                            options = optNode.getStr()
+                
+                if pattern.len > 0:
+                    let regexFilter = NJSDBRegexFilter(field: field, pattern: pattern, options: options)
+                    this.regexFilters.add(regexFilter)
+                processedSpecialOp = true
+            
+            # If we processed any special operator, skip regular processing
+            if processedSpecialOp:
                 continue
-            
-            # Check for array operators and $exists
-            if val.kind == JObject:
-                var processedSpecialOp = false
-                
-                # Check for $all operator
-                if "$all" in val:
-                    let allValues = val["$all"]
-                    if allValues.kind == JArray and allValues.len > 0:
-                        var values: seq[string] = @[]
-                        for v in allValues:
-                            values.add(jsonToString(v))
-                        let arrayFilter = NJSDBArrayFilter(field: field, op: aoAll, values: values)
-                        this.arrayFilters.add(arrayFilter)
-                    processedSpecialOp = true
-                
-                # Check for $size operator
-                if "$size" in val:
-                    let sizeVal = val["$size"]
-                    if sizeVal.kind == JInt:
-                        let arrayFilter = NJSDBArrayFilter(field: field, op: aoSize, size: sizeVal.getInt())
-                        this.arrayFilters.add(arrayFilter)
-                    processedSpecialOp = true
-                
-                # Check for $exists operator
-                if "$exists" in val:
-                    let existsVal = val["$exists"]
-                    if existsVal.kind == JBool:
-                        let existsFilter = NJSDBExistsFilter(field: field, exists: existsVal.getBool())
-                        this.existsFilters.add(existsFilter)
-                    processedSpecialOp = true
-                
-                # Check for $type operator
-                if "$type" in val:
-                    let typeVal = val["$type"]
-                    if typeVal.kind == JString:
-                        let typeFilter = NJSDBTypeFilter(field: field, jsonType: typeVal.getStr())
-                        this.typeFilters.add(typeFilter)
-                    processedSpecialOp = true
-                
-                # Check for $regex operator
-                if "$regex" in val:
-                    let regexVal = val["$regex"]
-                    var pattern = ""
-                    var options = ""
-                    
-                    if regexVal.kind == JString:
-                        pattern = regexVal.getStr()
-                    elif regexVal.kind == JObject:
-                        if "$regex" in regexVal:
-                            let patNode = regexVal["$regex"]
-                            if patNode.kind == JString:
-                                pattern = patNode.getStr()
-                        if "$options" in regexVal:
-                            let optNode = regexVal["$options"]
-                            if optNode.kind == JString:
-                                options = optNode.getStr()
-                    
-                    if pattern.len > 0:
-                        let regexFilter = NJSDBRegexFilter(field: field, pattern: pattern, options: options)
-                        this.regexFilters.add(regexFilter)
-                    processedSpecialOp = true
-                
-                # If we processed any special operator, skip regular processing
-                if processedSpecialOp:
-                    continue
-            
-            # Process as regular condition
-            let f = processCondition(field, val)
-            if f.field.len > 0:
-                this.filters.add(f)
         
-        return this
+        # Process as regular condition
+        let f = processCondition(field, val)
+        if f.field.len > 0:
+            this.filters.add(f)
     
+    return this
 
-    ## (chainable) Set sort field
-    method sort(field: string, ascending: bool = true, isNumber: bool = true): NJSDBQuery {.gcsafe.} =
 
-        # Check input
-        if field.len == 0:
-            raise newException(ValidationError, "No field provided")
-        
-        # Store it
-        this.sortField = field
-        this.sortAscending = ascending
-        this.sortIsNumber = isNumber
-        return this
+## (chainable) Set sort field
+proc sort*(this: var NJSDBQuery, field: string, ascending: bool = true, isNumber: bool = true): var NJSDBQuery {.gcsafe.} =
+
+    # Check input
+    if field.len == 0:
+        raise newException(ValidationError, "No field provided")
     
-
-    ## (chainable) Set the maximum number of documents to return, or -1 to return all documents.
-    method limit(count: int): NJSDBQuery {.gcsafe.} =
-
-        # Check input
-        if count < -1:
-            raise newException(ValidationError, "Cannot use negative numbers for the limit")
-
-        # Store it
-        this.pLimit = count
-        return this
+    # Store it
+    this.sortField = field
+    this.sortAscending = ascending
+    this.sortIsNumber = isNumber
+    return this
 
 
-    ## (chainable) Set the number of documents to skip
-    method offset(count: int): NJSDBQuery {.gcsafe.} =
+## (chainable) Set the maximum number of documents to return, or -1 to return all documents.
+proc limit*(this: var NJSDBQuery, count: int): var NJSDBQuery {.gcsafe.} =
 
-        # Check input
-        if count < 0:
-            raise newException(ValidationError, "Cannot use negative numbers for the offset")
+    # Check input
+    if count < -1:
+        raise newException(ValidationError, "Cannot use negative numbers for the limit")
 
-        # Store it
-        this.pOffset = count
-        return this
+    # Store it
+    this.pLimit = count
+    return this
 
 
-    ## (chainable) Set projection to return only specific fields.
-    ## Use { "field": 1 } to include fields, { "field": 0 } to exclude fields.
-    ## Cannot mix include and exclude (except _id can always be excluded).
-    method project(projectionObj: JsonNode): NJSDBQuery {.gcsafe.} =
+## (chainable) Set the number of documents to skip
+proc offset*(this: var NJSDBQuery, count: int): var NJSDBQuery {.gcsafe.} =
 
-        # Check input
-        if projectionObj == nil or projectionObj.kind != JObject:
-            raise newException(ValidationError, "Projection must be a JSON object")
+    # Check input
+    if count < 0:
+        raise newException(ValidationError, "Cannot use negative numbers for the offset")
 
-        # Validate projection - check for mixed include/exclude
-        var hasInclude = false
-        var hasExclude = false
-        for field, val in projectionObj:
-            if val.kind == JInt:
-                if val.getInt() == 1:
-                    hasInclude = true
-                elif val.getInt() == 0:
-                    hasExclude = true
-        
-        if hasInclude and hasExclude:
-            raise newException(ValidationError, "Cannot mix include and exclude in projection (except _id)")
+    # Store it
+    this.pOffset = count
+    return this
 
-        # Store projection
-        this.projection = projectionObj
-        this.projectionInclude = hasInclude
-        return this
+
+## (chainable) Set projection to return only specific fields.
+## Use { "field": 1 } to include fields, { "field": 0 } to exclude fields.
+## Cannot mix include and exclude (except _id can always be excluded).
+proc project*(this: var NJSDBQuery, projectionObj: JsonNode): var NJSDBQuery {.gcsafe.} =
+
+    # Check input
+    if projectionObj == nil or projectionObj.kind != JObject:
+        raise newException(ValidationError, "Projection must be a JSON object")
+
+    # Validate projection - check for mixed include/exclude
+    var hasInclude = false
+    var hasExclude = false
+    for field, val in projectionObj:
+        if val.kind == JInt:
+            if val.getInt() == 1:
+                hasInclude = true
+            elif val.getInt() == 0:
+                hasExclude = true
+    
+    if hasInclude and hasExclude:
+        raise newException(ValidationError, "Cannot mix include and exclude in projection (except _id)")
+
+    # Store projection
+    this.projection = projectionObj
+    this.projectionInclude = hasInclude
+    return this
 
 
 
 
 ##
 ## A simple NoSQL database written in Nim.
-class NJSDB:
-
+type NJSDB* = object
     ## (private) Database connection
-    var conn : DbConn
+    conn*: DbConn
 
     ## (private) True if the database has been prepared yet
-    var hasPrepared = false
+    hasPrepared*: bool
 
     ## (private) Extra columns that have been created for indexing
-    var extraColumns: seq[string] = @["id"]
+    extraColumns*: seq[string]
 
     ## (private) List of hashes of generated indexes
-    var createdIndexHashes: seq[string]
+    createdIndexHashes*: seq[string]
 
     ## (private) Current collection/table name (empty until collection() is called)
-    var currentCollection: string = ""
+    currentCollection*: string
 
-    ## Open a database connection
-    ##
-    ## Parameters:
-    ##   filename: Path to the SQLite database file. Use ":memory:" for an in-memory database.
-    ##
-    ## Example:
-    ##   var db = NJSDB()
-    ##   db.open("mydb.db")
-    ##   var memDb = NJSDB()
-    ##   memDb.open(":memory:")
-    method open(filename: string) {.gcsafe.} =
+## Forward declarations
+proc prepareDB*(this: var NJSDB) {.gcsafe.}
 
-        # Create the database connection
-        this.conn = openDatabase(filename)
+## Initialize a new NJSDB
+proc initNJSDB*(): NJSDB =
+    # conn will be set by open()
+    result.hasPrepared = false
+    result.extraColumns = @["id"]
+    result.createdIndexHashes = @[]
+    result.currentCollection = ""
 
+## Open a database connection
+##
+## Parameters:
+##   filename: Path to the SQLite database file. Use ":memory:" for an in-memory database.
+##
+## Example:
+##   var db = initNJSDB()
+##   db.open("mydb.db")
+##   var memDb = initNJSDB()
+##   memDb.open(":memory:")
+proc open*(this: var NJSDB, filename: string) {.gcsafe.} =
 
-    ## Close the database
-    method close() {.gcsafe.} =
-
-        # Close database
-        if this.conn.isOpen:
-            this.conn.close()
-
-
-    ## Select a collection (table) to work with
-    ##
-    ## Parameters:
-    ##   name: The name of the collection/table
-    ##
-    ## Returns:
-    ##   The NJSDB instance for method chaining
-    ##
-    ## Example:
-    ##   db.collection("users").put(%*{ "id": "user1", "name": "Alice" })
-    ##   db.collection("orders").put(%*{ "id": "order1", "total": 100 })
-    method collection(name: string): NJSDB {.gcsafe.} =
-
-        # Update current collection
-        this.currentCollection = name
-
-        # Reset prepared flag since we're switching to a different table
-        this.hasPrepared = false
-        this.extraColumns = @["id"]
-        this.createdIndexHashes = @[]
-
-        # Prepare the new collection
-        this.prepareDB()
-
-        # Return self for chaining
-        return this
+    # Create the database connection
+    this.conn = openDatabase(filename)
 
 
-    ## (private) Prepare the datatabase for use
-    method prepareDB() {.gcsafe.} =
+## Close the database
+proc close*(this: var NJSDB) {.gcsafe.} =
 
-        # Only do once
-        if this.hasPrepared: return
-        this.hasPrepared = true
-
-        # Check if collection has been selected
-        if this.currentCollection.len == 0:
-            raise newException(NJSDBError, "No collection selected. Call collection(name) first.")
-
-        # Create collection table if it doesn't exist
-        let createTableSql = "CREATE TABLE IF NOT EXISTS " & this.currentCollection & " (id TEXT PRIMARY KEY, _json TEXT)"
-        this.conn.exec(createTableSql)
-
-        # Get list of all columns in the table
-        let pragmaSql = "PRAGMA table_info(" & this.currentCollection & ")"
-        for row in this.conn.iterate(pragmaSql):
-
-            # Add to the extra columns array
-            let columnName = row[1].strVal
-            if columnName == "_json": continue
-            if not this.extraColumns.contains(columnName):
-                this.extraColumns.add(columnName)
+    # Close database
+    if this.conn.isOpen:
+        this.conn.close()
 
 
-    ## Execute a transaction. Either they all succeed, or the database will not be updated. This is also much faster when saving lots of documents at once.
-    method withTransaction(code: proc() {.gcsafe.}) {.gcsafe.} =
+## Select a collection (table) to work with
+##
+## Parameters:
+##   name: The name of the collection/table
+##
+## Returns:
+##   The NJSDB instance for method chaining
+##
+## Example:
+##   db.collection("users").put(%*{ "id": "user1", "name": "Alice" })
+##   db.collection("orders").put(%*{ "id": "order1", "total": 100 })
+proc collection*(this: var NJSDB, name: string): var NJSDB {.gcsafe.} =
 
-        # Prepate database
-        this.prepareDB()
+    # Update current collection
+    this.currentCollection = name
 
-        # Use tiny_sqlite's transaction template
-        this.conn.transaction:
-            # Execute the caller's code
-            code()
+    # Reset prepared flag since we're switching to a different table
+    this.hasPrepared = false
+    this.extraColumns = @["id"]
+    this.createdIndexHashes = @[]
 
+    # Prepare the new collection
+    this.prepareDB()
 
-    ## Start a query
-    method query(): NJSDBQuery {.gcsafe.} =
-
-        # Prepare database
-        this.prepareDB()
-
-        # Create query object
-        let q = NJSDBQuery.init()
-        # Allocate a stable copy of NJSDB on the heap
-        # This avoids the cast from RootRef and ensures the pointer remains valid
-        var dbCopy = cast[ptr NJSDB](alloc0(sizeof(NJSDB)))
-        dbCopy[] = this
-        q.db = dbCopy
-        return q
-
-
-    ## (private) Ensure column exists for the specified field
-    method createIndexableColumnForField(name: string, sqlName: string, sqlType: string) {.gcsafe.} =
-
-        # Stop if already created
-        if this.extraColumns.contains(sqlName):
-            return
-
-        # Begin an update transaction
-        this.withTransaction do():
-
-            # Create new field on the table
-            let str = "ALTER TABLE " & this.currentCollection & " ADD \"" & sqlName & "\" " & sqlType
-            this.conn.exec(str)
-
-            # Fetch all existing documents ... this is heavy, but we can't iterate and modify at the same time
-            let sqlUpdateRow = "UPDATE " & this.currentCollection & " SET \"" & sqlName & "\" = ? WHERE id = ?"
-            let selectSql = "SELECT id, _json FROM " & this.currentCollection
-            for row in this.conn.all(selectSql):
-
-                # Parse this document
-                let id = row[0].strVal
-                let json = parseJson(row[1].strVal)
-
-                # Get field value
-                let node = json{name}
-                var value = ""
-                if node.isNil: value = ""
-                elif node.kind == JString: value = node.getStr()
-                elif node.kind == JFloat: value = $node.getFloat()
-                elif node.kind == JInt: value = $node.getInt()
-
-                # Set row value
-                if value.len > 0:
-                    this.conn.exec(sqlUpdateRow, value, id)
-
-        # Done, update extra columns
-        this.extraColumns.add(sqlName)
+    # Return self for chaining
+    return this
 
 
-    ## (private) Create an index for the specified query, if needed
-    method createIndex(query: NJSDBQuery) {.gcsafe.} =
+## (private) Prepare the datatabase for use
+proc prepareDB*(this: var NJSDB) {.gcsafe.} =
 
-        # Stop if no index is needed, ie this query returns all data directly
-        if query.sortField == "" and query.filters.len == 0:
-            return
+    # Only do once
+    if this.hasPrepared: return
+    this.hasPrepared = true
 
-        # Check if index created
-        let indexHash = query.filters.mapIt(it.field).join("_") & query.sortField
-        if this.createdIndexHashes.contains(indexHash):
-            return
+    # Check if collection has been selected
+    if this.currentCollection.len == 0:
+        raise newException(NJSDBError, "No collection selected. Call collection(name) first.")
+
+    # Create collection table if it doesn't exist
+    let createTableSql = "CREATE TABLE IF NOT EXISTS " & this.currentCollection & " (id TEXT PRIMARY KEY, _json TEXT)"
+    this.conn.exec(createTableSql)
+
+    # Get list of all columns in the table
+    let pragmaSql = "PRAGMA table_info(" & this.currentCollection & ")"
+    for row in this.conn.iterate(pragmaSql):
+
+        # Add to the extra columns array
+        let columnName = row[1].strVal
+        if columnName == "_json": continue
+        if not this.extraColumns.contains(columnName):
+            this.extraColumns.add(columnName)
+
+
+## Execute a transaction. Either they all succeed, or the database will not be updated. This is also much faster when saving lots of documents at once.
+proc withTransaction*(this: var NJSDB, code: proc() {.gcsafe.}) {.gcsafe.} =
+
+    # Prepate database
+    this.prepareDB()
+
+    # Use tiny_sqlite's transaction template
+    this.conn.transaction:
+        # Execute the caller's code
+        code()
+
+
+## Start a query
+proc query*(this: var NJSDB): NJSDBQuery {.gcsafe.} =
+
+    # Prepare database
+    this.prepareDB()
+
+    # Create query object
+    result = initNJSDBQuery()
+    # Allocate a stable copy of NJSDB on the heap
+    # This avoids the cast from RootRef and ensures the pointer remains valid
+    var dbCopy = cast[ptr NJSDB](alloc0(sizeof(NJSDB)))
+    dbCopy[] = this
+    result.db = dbCopy
+
+
+## (private) Ensure column exists for the specified field
+proc createIndexableColumnForField*(this: var NJSDB, name: string, sqlName: string, sqlType: string) {.gcsafe.} =
+
+    # Stop if already created
+    if this.extraColumns.contains(sqlName):
+        return
+
+    # Begin an update transaction
+    this.withTransaction do():
+
+        # Create new field on the table
+        let str = "ALTER TABLE " & this.currentCollection & " ADD \"" & sqlName & "\" " & sqlType
+        this.conn.exec(str)
+
+        # Fetch all existing documents ... this is heavy, but we can't iterate and modify at the same time
+        let sqlUpdateRow = "UPDATE " & this.currentCollection & " SET \"" & sqlName & "\" = ? WHERE id = ?"
+        let selectSql = "SELECT id, _json FROM " & this.currentCollection
+        for row in this.conn.all(selectSql):
+
+            # Parse this document
+            let id = row[0].strVal
+            let json = parseJson(row[1].strVal)
+
+            # Get field value
+            let node = json{name}
+            var value = ""
+            if node.isNil: value = ""
+            elif node.kind == JString: value = node.getStr()
+            elif node.kind == JFloat: value = $node.getFloat()
+            elif node.kind == JInt: value = $node.getInt()
+
+            # Set row value
+            if value.len > 0:
+                this.conn.exec(sqlUpdateRow, value, id)
+
+    # Done, update extra columns
+    this.extraColumns.add(sqlName)
+
+
+## (private) Create an index for the specified query, if needed
+proc createIndex*(this: var NJSDB, query: NJSDBQuery) {.gcsafe.} =
+
+    # Stop if no index is needed, ie this query returns all data directly
+    if query.sortField == "" and query.filters.len == 0:
+        return
+
+    # Check if index created
+    let indexHash = query.filters.mapIt(it.field).join("_") & query.sortField
+    if this.createdIndexHashes.contains(indexHash):
+        return
+    
+    # Create SQL
+    var sqlStr = "CREATE INDEX IF NOT EXISTS \"" & this.currentCollection & "_" & indexHash & "\" ON " & this.currentCollection & " ("
+
+    # Add filter fields
+    var addedFirst = false
+    for filter in query.filters:
+
+        # Get SQL column info
+        var sqlType = if filter.fieldIsNumber: "REAL" else: "TEXT"
+        var sqlName = filter.field & "_" & sqlType
         
-        # Create SQL
-        var sqlStr = "CREATE INDEX IF NOT EXISTS \"" & this.currentCollection & "_" & indexHash & "\" ON " & this.currentCollection & " ("
+        # Add the separator if this is not the first filter
+        if addedFirst: sqlStr &= ", "
+        addedFirst = true
 
-        # Add filter fields
-        var addedFirst = false
-        for filter in query.filters:
+        # Add the filter
+        sqlStr &= "\"" & sqlName & "\""
 
-            # Get SQL column info
-            var sqlType = if filter.fieldIsNumber: "REAL" else: "TEXT"
-            var sqlName = filter.field & "_" & sqlType
-            
-            # Add the separator if this is not the first filter
-            if addedFirst: sqlStr &= ", "
-            addedFirst = true
+    # Add sort field
+    if query.sortField.len > 0:
 
-            # Add the filter
-            sqlStr &= "\"" & sqlName & "\""
+        # Get SQL column info
+        var sqlType = if query.sortIsNumber: "REAL" else: "TEXT"
+        var sqlName = query.sortField & "_" & sqlType
+        
+        # Add the separator if this is not the first filter
+        if addedFirst: sqlStr &= ", "
+        addedFirst = true
 
-        # Add sort field
-        if query.sortField.len > 0:
+        # Add the filter
+        sqlStr &= "\"" & sqlName & "\""
 
-            # Get SQL column info
-            var sqlType = if query.sortIsNumber: "REAL" else: "TEXT"
-            var sqlName = query.sortField & "_" & sqlType
-            
-            # Add the separator if this is not the first filter
-            if addedFirst: sqlStr &= ", "
-            addedFirst = true
+    # Close the SQL
+    sqlStr &= ")"
 
-            # Add the filter
-            sqlStr &= "\"" & sqlName & "\""
+    # Execute it
+    this.conn.exec(sqlStr)
 
-        # Close the SQL
-        sqlStr &= ")"
-
-        # Execute it
-        this.conn.exec(sqlStr)
-
-        # Done, store index hash
-        this.createdIndexHashes.add(indexHash)
+    # Done, store index hash
+    this.createdIndexHashes.add(indexHash)
 
 
 
@@ -873,7 +898,7 @@ proc buildRegexFilterSql(regexFilter: NJSDBRegexFilter, bindValues: var seq[DbVa
 proc prepareQuerySql(this: NJSDBQuery, sqlPrefix: string): (string, seq[DbValue]) =
 
     # Get database reference
-    let db = cast[ptr NJSDB](this.db)[]
+    var db = cast[ptr NJSDB](this.db)[]
     
     # Build query
     var bindValues : seq[DbValue]
@@ -1216,7 +1241,7 @@ proc delete*(this: NJSDBQuery): int {.discardable.} =
 
 
 ## Execute the query and return the first document found, or null if not found.
-proc get*(this: NJSDBQuery): JsonNode =
+proc get*(this: var NJSDBQuery): JsonNode =
 
     # Limit to one
     this.pLimit = 1
@@ -1230,13 +1255,15 @@ proc get*(this: NJSDBQuery): JsonNode =
 
 
 ## Helper: Get a document with the specified ID, or return nil if not found
-proc get*(this: NJSDB, id: string): JsonNode =
-    return this.query().where("id", "==", id).get()
+proc get*(this: var NJSDB, id: string): JsonNode =
+    var q = this.query()
+    return q.where("id", "==", id).get()
 
 
 ## Delete a document with the specified ID. Returns true if a document was deleted.
-proc delete*(this: NJSDB, id: string): bool =
-    return this.query().where("id", "==", id).limit(1).delete() > 0
+proc delete*(this: var NJSDB, id: string): bool =
+    var q = this.query()
+    return q.where("id", "==", id).limit(1).delete() > 0
 
 
 ## Update the documents matched by this query with the given fields. Returns the number of documents updated.
@@ -1411,8 +1438,9 @@ proc update*(this: NJSDBQuery, updates: JsonNode): int {.discardable.} =
 
 
 ## Helper: Update a document with the specified ID. Returns true if a document was updated.
-proc updateOne*(this: NJSDB, id: string, updates: JsonNode): bool =
-    return this.query().where("id", "==", id).limit(1).update(updates) > 0
+proc updateOne*(this: var NJSDB, id: string, updates: JsonNode): bool =
+    var q = this.query()
+    return q.where("id", "==", id).limit(1).update(updates) > 0
 
 ## Aggregation result type
 type AggregateResult* = object
@@ -1427,7 +1455,7 @@ type AggregateResult* = object
 ## Extended aggregation with multiple operators
 ## Supports: $sum, $avg, $min, $max, $count
 ## Example: aggregate("category", "amount", %*{ "$sum": "amount", "$avg": "amount" })
-proc aggregate*(this: NJSDB, groupField: string, aggregations: JsonNode, matchFilter: JsonNode = nil): seq[AggregateResult] {.gcsafe.} =
+proc aggregate*(this: var NJSDB, groupField: string, aggregations: JsonNode, matchFilter: JsonNode = nil): seq[AggregateResult] {.gcsafe.} =
     ## Performs aggregation with multiple operators
     ## groupField: Field to group by
     ## aggregations: Json object with aggregation operators
@@ -1534,7 +1562,7 @@ proc aggregate*(this: NJSDB, groupField: string, aggregations: JsonNode, matchFi
 
 
 ## Put a new document into the database, or replace it if it already exists
-proc writeDocument(this: NJSDB, document: JsonNode) =
+proc writeDocument(this: var NJSDB, document: JsonNode) =
 
     # Check input
     if document == nil:
@@ -1574,7 +1602,7 @@ proc writeDocument(this: NJSDB, document: JsonNode) =
 
 
 ## Put a new document into the database, merging the fields if it already exists
-proc put*(this: NJSDB, document: JsonNode, merge: bool = false) =
+proc put*(this: var NJSDB, document: JsonNode, merge: bool = false) =
 
     # If not merging, just write it and return
     if not merge:
@@ -1609,7 +1637,7 @@ proc put*(this: NJSDB, document: JsonNode, merge: bool = false) =
 
 ## Upsert a document: Update if it exists, insert if it doesn't.
 ## Returns the number of documents affected (always 1).
-proc upsert*(this: NJSDB, document: JsonNode): int {.discardable.} =
+proc upsert*(this: var NJSDB, document: JsonNode): int {.discardable.} =
 
     # Check input
     if document == nil:
@@ -1642,7 +1670,7 @@ proc upsert*(this: NJSDB, document: JsonNode): int {.discardable.} =
 
 ## Upsert with merge: Update by merging fields if it exists, insert if it doesn't.
 ## Returns the number of documents affected (always 1).
-proc upsert*(this: NJSDB, document: JsonNode, merge: bool): int {.discardable.} =
+proc upsert*(this: var NJSDB, document: JsonNode, merge: bool): int {.discardable.} =
 
     # If not merging, use the simple upsert
     if not merge:
@@ -1680,7 +1708,7 @@ proc upsert*(this: NJSDB, document: JsonNode, merge: bool): int {.discardable.} 
 
 ## Insert multiple documents efficiently
 ## Returns the number of documents inserted
-proc insertMany*(this: NJSDB, documents: seq[JsonNode]): int {.discardable.} =
+proc insertMany*(this: var NJSDB, documents: seq[JsonNode]): int {.discardable.} =
     ## Efficiently inserts multiple documents in a single transaction
     ## Much faster than individual put() calls for large datasets
     
@@ -1718,7 +1746,7 @@ type AggregatePipelineResult* = object
 ##     %*{ "$sort": { "total": -1 } },
 ##     %*{ "$limit": 10 }
 ##   ])
-proc aggregate*(this: NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {.gcsafe.} =
+proc aggregate*(this: var NJSDB, pipeline: seq[JsonNode]): AggregatePipelineResult {.gcsafe.} =
     ## Executes an aggregation pipeline
     ## Returns aggregated results as JsonNode sequence
     
